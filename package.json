@@ -9,7 +9,6 @@
     "drizzle-kit": "^1.0.0-beta.20"
   },
   "scripts": {
-    "dev":"bun run src/main.ts",
     "db:push": "bun x drizzle-kit push"
   },
   "peerDependencies": {
