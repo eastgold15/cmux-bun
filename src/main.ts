@@ -29,6 +29,18 @@ async function main() {
   //     否则 PTY 可能拿到 0x0 或默认 80x24，导致输出错位
   await Bun.sleep(100);
 
+  // 4.6 Ctrl+C 兜底：OpenTUI 的 key 事件可能不传递 \x03
+  //     直接监听 stdin 的 raw data 确保能退出
+  function gracefulExit() {
+    clearInterval(renderLoop);
+    ptyManager.killAll();
+    ui.destroy();
+    process.exit(0);
+  }
+  process.stdin.on("data", (chunk: Buffer) => {
+    if (chunk.includes(0x03)) gracefulExit(); // Ctrl+C
+  });
+
   // 5. 数据结构
   const ptyManager = new TerminalManager();
   const parsers = new Map<string, AnsiParser>();
@@ -143,12 +155,9 @@ async function main() {
       }
     }
 
-    // Ctrl+C 退出
+    // Ctrl+C 退出（兜底在 stdin data 监听里）
     if (key === "\x03") {
-      clearInterval(renderLoop);
-      ptyManager.killAll();
-      ui.destroy();
-      process.exit(0);
+      gracefulExit();
     }
 
     // 转发给当前 PTY
