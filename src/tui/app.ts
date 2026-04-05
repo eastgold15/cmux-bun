@@ -306,6 +306,11 @@ export class AppUI {
     }
   }
 
+  /** 设置视窗边框颜色（由动画模块驱动） */
+  setViewportBorderColor(color: string) {
+    this.viewport.borderColor = color;
+  }
+
   updateStatusBar(text: string) {
     this.statusText.content = text;
   }

@@ -8,6 +8,9 @@ import { RpcServer } from "./rpc/server.js";
 import { db, runMigrations } from "./db/connection.js";
 import { tabs } from "./db/schema.js";
 import { eq } from "drizzle-orm";
+import { getGitBranch } from "./utils/git.js";
+import { getAnimatedBorderColor } from "./tui/animation.js";
+import type { AnimationState } from "./tui/animation.js";
 
 async function main() {
   // 0. 平台检查
@@ -64,6 +67,17 @@ async function main() {
   // 7. 渲染循环 ~30fps
   const renderLoop = setInterval(() => {
     const activeId = appActor.getSnapshot().context.activeTabId;
+
+    // 呼吸灯动画：根据 tab 状态驱动视窗边框颜色
+    if (activeId) {
+      const actor = tabActors.get(activeId);
+      if (actor) {
+        const tabState = actor.getSnapshot().value as AnimationState;
+        ui.setViewportBorderColor(getAnimatedBorderColor(tabState));
+      }
+    }
+
+    // 终端内容更新
     if (activeId && dirtyTabs.has(activeId)) {
       const parser = parsers.get(activeId);
       if (parser) {
