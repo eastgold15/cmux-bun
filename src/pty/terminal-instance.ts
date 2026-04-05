@@ -23,20 +23,28 @@ export class TerminalInstance {
     this.id = id;
     const isWin = process.platform === "win32";
     const shell = options.shell ?? (isWin ? "powershell.exe" : "/bin/bash");
-    const args = isWin && shell === "powershell.exe"
-      ? ["-NoLogo", "-Command", "chcp 65001 | Out-Null; powershell -NoLogo"]
-      : [];
-    const effectiveShell = isWin && shell === "powershell.exe" ? "cmd.exe" : shell;
+    const args = isWin && shell === "powershell.exe" ? ["-NoLogo"] : [];
+
+    const env: Record<string, string> = {
+      ...(process.env as Record<string, string>),
+      TERM: "xterm-256color",
+      LANG: "en_US.UTF-8",
+      ...options.env,
+    };
+    // Windows 上强制 UTF-8 代码页
+    if (isWin) {
+      env.CHCP = "65001";
+    }
 
     const ptyOptions: IPtyForkOptions = {
       name: "xterm-256color",
       cols: options.cols ?? 80,
       rows: options.rows ?? 24,
       cwd: options.cwd ?? process.cwd(),
-      env: options.env ?? (process.env as Record<string, string>),
+      env,
     };
 
-    this.pty = spawn(effectiveShell, args, ptyOptions);
+    this.pty = spawn(shell, args, ptyOptions);
     this.pid = this.pty.pid;
 
     this.dataSubscription = this.pty.onData((data) => {

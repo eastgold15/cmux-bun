@@ -10,11 +10,6 @@ import { tabs } from "./db/schema.js";
 import { eq } from "drizzle-orm";
 
 async function main() {
-  // 0. 环境检查
-  if (process.platform !== "win32") {
-    console.warn("警告：目前仅在 Windows ConPTY 下优化，其他平台可能存在兼容性问题");
-  }
-
   // 1. 初始化数据库
   runMigrations();
 
@@ -22,20 +17,22 @@ async function main() {
   const appActor = createAppActor();
   appActor.start();
 
-  // 3. 先启动渲染器 —— 完全接管终端（alternate screen + raw mode）
-  //    必须在 PTY 之前，否则 PTY 初始化输出会泄漏到物理终端
+  // 3. 启动渲染器 —— 完全接管终端（alternate screen + raw mode）
   const renderer = await createCliRenderer({
     exitOnCtrlC: false,
   });
 
-  // 4. 渲染器就绪，创建 UI
+  // 4. 创建 UI
   const ui = new AppUI(renderer);
+
+  // 4.5 等待 Yoga Layout 完成首帧计算，确保 getViewportSize() 返回正确值
+  //     否则 PTY 可能拿到 0x0 或默认 80x24，导致输出错位
+  await Bun.sleep(100);
 
   // 5. 数据结构
   const ptyManager = new TerminalManager();
   const parsers = new Map<string, AnsiParser>();
   const tabActors = new Map<string, ReturnType<typeof createTabActor>>();
-  // 脏标记：哪些 tab 的 parser 有新数据需要渲染
   const dirtyTabs = new Set<string>();
 
   // 6. Resize 联动
@@ -47,22 +44,23 @@ async function main() {
     }
   });
 
-  // 7. 渲染循环：固定 ~30fps 检查脏标记，只重绘有变化的 tab
-  //    不再在 onData 里直接触发 ui.update，避免高频重绘导致 CPU 飙升
+  // 7. 渲染循环 ~30fps
   const renderLoop = setInterval(() => {
     const activeId = appActor.getSnapshot().context.activeTabId;
     if (activeId && dirtyTabs.has(activeId)) {
       const parser = parsers.get(activeId);
       if (parser) {
-        ui.updateTerminalGrid(parser.getGrid());
+        ui.updateTerminalOutput(parser.getRows().join("\n"));
       }
       dirtyTabs.delete(activeId);
     }
   }, 32);
 
-  // 8. 创建 Tab（此时渲染器已完全接管终端）
-  function createTab(name: string, cwd?: string, shell?: string) {
-    const id = `tab-${Date.now()}`;
+  // 8. 创建 Tab
+  //    existingId: 从数据库恢复时使用数据库中的 ID，保证内存 ID 与 DB ID 一致
+  //    只有新建 Tab 才写入数据库
+  function createTab(name: string, cwd?: string, shell?: string, existingId?: string) {
+    const id = existingId ?? `tab-${Date.now()}`;
     const { cols, rows } = ui.getViewportSize();
     const parser = new AnsiParser(cols, rows);
     parsers.set(id, parser);
@@ -74,12 +72,11 @@ async function main() {
     tabActors.set(id, tabActor);
 
     terminal.onData((data) => {
-      // 只喂解析器 + 标记脏，绝对不在这里调 ui.update
+      // 只喂解析器 + 标记脏
       parser.feed(data);
       tabActor.send({ type: "DATA_RECEIVED", data });
       dirtyTabs.add(id);
 
-      // 后台 tab 标记未读
       const activeId = appActor.getSnapshot().context.activeTabId;
       if (activeId !== id) {
         ui.setTabUnread(id);
@@ -97,12 +94,16 @@ async function main() {
     ui.addTab(id, name);
     appActor.send({ type: "ADD_TAB", tabId: id });
 
-    db.insert(tabs).values({
-      name,
-      cwd: cwd ?? process.cwd(),
-      shell: shell ?? "cmd.exe",
-      order: appActor.getSnapshot().context.tabIds.length,
-    }).run();
+    // 只有新建 Tab 才写入数据库（恢复 session 时用 existingId 跳过）
+    if (!existingId) {
+      db.insert(tabs).values({
+        id,
+        name,
+        cwd: cwd ?? process.cwd(),
+        shell: shell ?? "cmd.exe",
+        order: appActor.getSnapshot().context.tabIds.length,
+      }).run();
+    }
 
     return id;
   }
@@ -120,7 +121,7 @@ async function main() {
     db.delete(tabs).where(eq(tabs.id, id)).run();
   }
 
-  // 10. 键盘处理（通过 OpenTUI 的事件系统，不直接操作 process.stdin）
+  // 10. 键盘处理
   ui.onKey((key: string) => {
     const state = appActor.getSnapshot();
     const activeId = state.context.activeTabId;
@@ -133,10 +134,9 @@ async function main() {
         const newActiveId = appActor.getSnapshot().context.activeTabId;
         if (newActiveId) {
           ui.setActiveTab(newActiveId);
-          // Tab 切换时立即渲染一次，不等渲染循环
           const parser = parsers.get(newActiveId);
           if (parser) {
-            ui.updateTerminalGrid(parser.getGrid());
+            ui.updateTerminalOutput(parser.getRows().join("\n"));
           }
         }
         return;
@@ -151,7 +151,7 @@ async function main() {
       process.exit(0);
     }
 
-    // 其他按键转发给当前活跃的 PTY
+    // 转发给当前 PTY
     if (activeId) {
       const terminal = ptyManager.get(activeId);
       terminal?.write(key);
@@ -185,11 +185,11 @@ async function main() {
   });
   rpc.start();
 
-  // 13. 恢复 session 或创建默认 Tab
+  // 13. 恢复 session：用数据库中的 id 作为 existingId，保证 ID 一致
   const savedTabs = db.select().from(tabs).orderBy(tabs.order).all();
   if (savedTabs.length > 0) {
     for (const tab of savedTabs) {
-      createTab(tab.name, tab.cwd ?? undefined, tab.shell ?? undefined);
+      createTab(tab.name, tab.cwd ?? undefined, tab.shell ?? undefined, tab.id);
     }
     const firstId = appActor.getSnapshot().context.tabIds[0];
     if (firstId) ui.setActiveTab(firstId);

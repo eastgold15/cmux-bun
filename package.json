@@ -10,7 +10,8 @@
   },
   "scripts": {
     "db:push": "bun x drizzle-kit push",
-    "build:exe": "bun build ./src/main.ts --compile --outfile cmux-clone.exe"
+    "build:exe": "bun build ./src/main.ts --compile --outfile cmux-clone.exe",
+    "type-check": "bun tsc --noEmit"
   },
   "peerDependencies": {
     "typescript": "^5"
