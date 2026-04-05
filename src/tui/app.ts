@@ -5,6 +5,7 @@ import {
 } from "@opentui/core";
 import type { CliRenderer } from "@opentui/core";
 import type { TabState } from "../types/index.js";
+import type { Cell } from "../parser/ansi-parser.js";
 
 const SIDEBAR_WIDTH = 22;
 
@@ -234,6 +235,59 @@ export class AppUI {
 
   updateTerminalOutput(text: string) {
     this.terminalOutput.content = text;
+  }
+
+  /** 接收 Grid Buffer 并渲染为带 ANSI 颜色的字符串 */
+  updateTerminalGrid(grid: Cell[][]) {
+    const lines: string[] = [];
+    const RESET = "\x1b[0m";
+
+    for (let y = 0; y < grid.length; y++) {
+      const row = grid[y]!;
+      let line = "";
+      let prevFg = "";
+      let prevBg = "";
+      let prevBold = false;
+      let prevUnderline = false;
+
+      for (let x = 0; x < row.length; x++) {
+        const cell = row[x]!;
+
+        // 只在属性变化时输出 ANSI 码
+        if (cell.fg !== prevFg || cell.bg !== prevBg || cell.bold !== prevBold || cell.underline !== prevUnderline) {
+          if (prevFg !== "" || prevBg !== "" || prevBold || prevUnderline) {
+            line += RESET;
+          }
+          if (cell.bold) line += "\x1b[1m";
+          if (cell.underline) line += "\x1b[4m";
+          if (cell.fg !== "#ffffff") line += `\x1b[38;2;${this.hexToRgb(cell.fg)}m`;
+          if (cell.bg !== "#000000") line += `\x1b[48;2;${this.hexToRgb(cell.bg)}m`;
+
+          prevFg = cell.fg;
+          prevBg = cell.bg;
+          prevBold = cell.bold;
+          prevUnderline = cell.underline;
+        }
+
+        line += cell.char;
+      }
+
+      if (prevFg !== "" || prevBg !== "" || prevBold || prevUnderline) {
+        line += RESET;
+      }
+
+      lines.push(line);
+    }
+
+    this.terminalOutput.content = lines.join("\n");
+  }
+
+  private hexToRgb(hex: string): string {
+    const h = hex.replace("#", "");
+    const r = parseInt(h.substring(0, 2), 16);
+    const g = parseInt(h.substring(2, 4), 16);
+    const b = parseInt(h.substring(4, 6), 16);
+    return `${r};${g};${b}`;
   }
 
   updateTabState(tabId: string, state: TabState) {
