@@ -131,20 +131,20 @@ export class AppUI {
       id: `tab-${tabId}`,
       width: SIDEBAR_WIDTH - 2,
       height: 2,
-      backgroundColor: "#1a1a2e",
+      backgroundColor: theme.sidebar.bg,
       flexDirection: "column",
     });
 
     const tabText = new TextRenderable(this.renderer, {
       id: `tab-text-${tabId}`,
       content: ` ${name}`,
-      fg: "#888888",
+      fg: theme.sidebar.tabInactiveFg,
     });
 
     const cwdText = new TextRenderable(this.renderer, {
       id: `tab-cwd-${tabId}`,
       content: cwd ? ` ${this.shortenCwd(cwd)}` : "",
-      fg: "#555555",
+      fg: theme.sidebar.tabCwdFg,
     });
 
     tabItem.add(tabText);
@@ -171,8 +171,8 @@ export class AppUI {
   setActiveTab(tabId: string) {
     const prevItem = this.activeTabId ? this.tabItems.get(this.activeTabId) : null;
     if (prevItem) {
-      prevItem.box.backgroundColor = "#1a1a2e";
-      prevItem.text.fg = "#888888";
+      prevItem.box.backgroundColor = theme.sidebar.bg;
+      prevItem.text.fg = theme.sidebar.tabInactiveFg;
     }
 
     this.activeTabId = tabId;
@@ -180,8 +180,8 @@ export class AppUI {
     if (current) {
       current.hasUnread = false;
       const state = this.tabStates.get(tabId);
-      const borderColor = state?.hasAlert ? "#ffaa00" : state?.isBusy ? "#4488ff" : "#00ff88";
-      current.box.backgroundColor = "#2a2a4e";
+      const borderColor = state?.hasAlert ? theme.indicator.attention : state?.isBusy ? theme.indicator.busy : theme.indicator.active;
+      current.box.backgroundColor = theme.sidebar.tabActiveBg;
       current.text.fg = borderColor;
       this.updateTabIndicator(tabId, current, state);
     }
@@ -203,17 +203,17 @@ export class AppUI {
     let indicator = " ";
     if (state?.hasAlert) {
       indicator = "!";
-      item.text.fg = "#ff4444";
+      item.text.fg = theme.indicator.attention;
     } else if (state?.isBusy) {
       indicator = "*";
-      item.text.fg = "#4488ff";
+      item.text.fg = theme.indicator.busy;
     } else if (item.hasUnread) {
       indicator = "\u25CF";
-      item.text.fg = "#ffaa00";
+      item.text.fg = theme.indicator.unread;
     } else if (isActive) {
-      item.text.fg = "#00ff88";
+      item.text.fg = theme.indicator.active;
     } else {
-      item.text.fg = "#888888";
+      item.text.fg = theme.indicator.idle;
     }
 
     // 从 StyledText 的 chunks 中提取纯文本
@@ -244,6 +244,9 @@ export class AppUI {
 
       for (let x = 0; x < row.length; x++) {
         const cell = row[x]!;
+
+        // 跳过宽字符的占位 cell（width === 0，char 为空）
+        if (cell.width === 0) continue;
 
         if (cell.fg !== prevFg || cell.bg !== prevBg || cell.bold !== prevBold || cell.underline !== prevUnderline) {
           if (prevFg !== "" || prevBg !== "" || prevBold || prevUnderline) {
@@ -295,11 +298,11 @@ export class AppUI {
   private updateViewportBorder() {
     const state = this.activeTabId ? this.tabStates.get(this.activeTabId) : undefined;
     if (state?.hasAlert) {
-      this.viewport.borderColor = "#ffaa00";
+      this.viewport.borderColor = theme.viewport.borderAttention;
     } else if (state?.isBusy) {
-      this.viewport.borderColor = "#4488ff";
+      this.viewport.borderColor = theme.viewport.borderBusy;
     } else {
-      this.viewport.borderColor = "#333333";
+      this.viewport.borderColor = theme.viewport.borderIdle;
     }
   }
 

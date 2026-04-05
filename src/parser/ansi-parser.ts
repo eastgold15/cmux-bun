@@ -4,6 +4,54 @@ export interface Cell {
   bg: string;
   bold: boolean;
   underline: boolean;
+  width: number; // 1 = narrow, 2 = wide (CJK/emoji)
+}
+
+/**
+ * 判断 Unicode 码点的显示宽度（简化版 wcwidth）。
+ * CJK Unified Ideographs、CJK Compatibility、Fullwidth Forms 等占 2 列。
+ * 结合标记（Combining marks, 0x0300–0x036F）占 0 列。
+ * 其余默认占 1 列。
+ */
+function charWidth(cp: number): number {
+  // 结合标记
+  if (cp >= 0x0300 && cp <= 0x036F) return 0;
+  if (cp >= 0x1AB0 && cp <= 0x1AFF) return 0;
+  if (cp >= 0x1DC0 && cp <= 0x1DFF) return 0;
+  if (cp >= 0x20D0 && cp <= 0x20FF) return 0;
+  if (cp >= 0xFE20 && cp <= 0xFE2F) return 0;
+
+  // CJK Unified Ideographs
+  if (cp >= 0x4E00 && cp <= 0x9FFF) return 2;
+  // CJK Extension A
+  if (cp >= 0x3400 && cp <= 0x4DBF) return 2;
+  // CJK Extension B & later
+  if (cp >= 0x20000 && cp <= 0x2A6DF) return 2;
+  // CJK Compatibility Ideographs
+  if (cp >= 0xF900 && cp <= 0xFAFF) return 2;
+  // CJK Radicals Supplement / Kangxi
+  if (cp >= 0x2E80 && cp <= 0x2FDF) return 2;
+  // CJK Symbols and Punctuation 中的部分
+  if (cp >= 0x3000 && cp <= 0x303F) return 2;
+  // Hiragana / Katakana
+  if (cp >= 0x3040 && cp <= 0x309F) return 2;
+  if (cp >= 0x30A0 && cp <= 0x30FF) return 2;
+  // Fullwidth Forms
+  if (cp >= 0xFF01 && cp <= 0xFF60) return 2;
+  if (cp >= 0xFFE0 && cp <= 0xFFE6) return 2;
+  // Hangul Syllables
+  if (cp >= 0xAC00 && cp <= 0xD7AF) return 2;
+  // Hangul Jamo
+  if (cp >= 0x1100 && cp <= 0x11FF) return 2;
+  // Box Drawing / Block Elements（部分终端算双宽，保守按 1 处理）
+
+  // Emoji ranges (主要的双宽 emoji)
+  if (cp >= 0x1F300 && cp <= 0x1F9FF) return 2;
+  if (cp >= 0x1FA00 && cp <= 0x1FAFF) return 2;
+  if (cp >= 0x2600 && cp <= 0x27BF) return 2; // Misc Symbols
+  if (cp >= 0xFE00 && cp <= 0xFE0F) return 0; // Variation selectors
+
+  return 1;
 }
 
 export class AnsiParser {
@@ -28,13 +76,7 @@ export class AnsiParser {
 
   private createGrid(cols: number, rows: number): Cell[][] {
     return Array.from({ length: rows }, () =>
-      Array.from({ length: cols }, () => ({
-        char: " ",
-        fg: "#ffffff",
-        bg: "#000000",
-        bold: false,
-        underline: false,
-      }))
+      Array.from({ length: cols }, () => this.defaultCell())
     );
   }
 
@@ -51,70 +93,128 @@ export class AnsiParser {
   }
 
   feed(data: string) {
-    let i = 0;
-    while (i < data.length) {
-      if (data[i] === "\x1b") {
-        i = this.parseEscape(data, i);
-      } else if (data[i] === "\r") {
+    // 使用 Array.from 按 code point 展开，正确处理 UTF-16 surrogate pairs
+    const chars = [...data];
+    let idx = 0;
+
+    while (idx < chars.length) {
+      const ch = chars[idx]!;
+
+      if (ch === "\x1b") {
+        idx = this.parseEscape(chars, idx);
+      } else if (ch === "\r") {
         this.cursorX = 0;
-        i++;
-      } else if (data[i] === "\n") {
+        idx++;
+      } else if (ch === "\n") {
         this.cursorY++;
         if (this.cursorY >= this.rows) {
           this.scrollUp();
           this.cursorY = this.rows - 1;
         }
-        i++;
-      } else if (data[i] === "\t") {
+        idx++;
+      } else if (ch === "\t") {
         this.cursorX = Math.min(this.cursorX + 8 - (this.cursorX % 8), this.cols - 1);
-        i++;
-      } else if (data[i] === "\x08") {
-        if (this.cursorX > 0) this.cursorX--;
-        i++;
-      } else if (data.charCodeAt(i) >= 32) {
-        // 可打印字符（跳过其他控制字符）
-        const row = this.grid[this.cursorY];
-        if (row && this.cursorX < this.cols && this.cursorY < this.rows) {
-          row[this.cursorX] = {
-            char: data.charAt(i),
-            fg: this.currentFg,
-            bg: this.currentBg,
-            bold: this.bold,
-            underline: this.underline,
-          };
-          this.cursorX++;
-          if (this.cursorX >= this.cols) {
-            this.cursorX = 0;
-            this.cursorY++;
-            if (this.cursorY >= this.rows) {
-              this.scrollUp();
-              this.cursorY = this.rows - 1;
-            }
+        idx++;
+      } else if (ch === "\x08") {
+        // Backspace: 回退到前一个非填充位
+        if (this.cursorX > 0) {
+          this.cursorX--;
+          const row = this.grid[this.cursorY];
+          if (row && this.cursorX > 0 && row[this.cursorX]?.width === 0) {
+            this.cursorX--;
           }
         }
-        i++;
+        idx++;
       } else {
-        // 其他控制字符直接跳过
-        i++;
+        const cp = ch.codePointAt(0)!;
+        if (cp >= 32) {
+          this.putChar(ch, cp);
+        }
+        idx++;
       }
     }
 
-    this.detectNotifyPatterns(data);
+    this.detectNotifyPatterns();
   }
 
-  private parseEscape(data: string, start: number): number {
-    if (start + 1 >= data.length) return start + 1;
+  /** 将一个字符写入 grid，处理宽字符的 2-cell 占位 */
+  private putChar(ch: string, cp: number) {
+    if (this.cursorY >= this.rows || this.cursorX >= this.cols) return;
 
-    const next = data[start + 1];
+    const w = charWidth(cp);
+    const row = this.grid[this.cursorY]!;
+
+    if (w === 0) {
+      // 结合标记：附加到前一个非空 cell
+      for (let x = this.cursorX - 1; x >= 0; x--) {
+        if (row[x]!.width > 0) {
+          row[x]!.char += ch;
+          return;
+        }
+      }
+      return;
+    }
+
+    // 如果写宽字符但剩余列不足 2 列，先清除当前列然后换行
+    if (w === 2 && this.cursorX >= this.cols - 1) {
+      row[this.cursorX] = this.defaultCell();
+      this.cursorX = 0;
+      this.cursorY++;
+      if (this.cursorY >= this.rows) {
+        this.scrollUp();
+        this.cursorY = this.rows - 1;
+      }
+    }
+
+    const currentRow = this.grid[this.cursorY]!;
+    // 写入主 cell
+    currentRow[this.cursorX] = {
+      char: ch,
+      fg: this.currentFg,
+      bg: this.currentBg,
+      bold: this.bold,
+      underline: this.underline,
+      width: w,
+    };
+
+    if (w === 2) {
+      // 宽字符占 2 列：第二个 cell 标记为 width=0（占位）
+      if (this.cursorX + 1 < this.cols) {
+        currentRow[this.cursorX + 1] = {
+          char: "",
+          fg: this.currentFg,
+          bg: this.currentBg,
+          bold: this.bold,
+          underline: this.underline,
+          width: 0,
+        };
+      }
+    }
+
+    this.cursorX += w;
+    if (this.cursorX >= this.cols) {
+      this.cursorX = 0;
+      this.cursorY++;
+      if (this.cursorY >= this.rows) {
+        this.scrollUp();
+        this.cursorY = this.rows - 1;
+      }
+    }
+  }
+
+  private parseEscape(chars: string[], start: number): number {
+    if (start + 1 >= chars.length) return start + 1;
+
+    const next = chars[start + 1];
 
     // CSI 序列: \x1b[
     if (next === "[") {
-      return this.parseCsi(data, start + 2);
+      return this.parseCsi(chars, start + 2);
     }
 
     // OSC 序列: \x1b]  (以 BEL \x07 或 ST \x1b\\ 结尾)
     if (next === "]") {
-      return this.parseOsc(data, start + 2);
+      return this.parseOsc(chars, start + 2);
     }
 
     // SS2/SS3: \x1bN / \x1bO — 两字节序列，直接跳过
@@ -133,12 +233,12 @@ export class AnsiParser {
     return start + 2;
   }
 
-  private parseCsi(data: string, start: number): number {
+  private parseCsi(chars: string[], start: number): number {
     let params = "";
     let i = start;
 
-    while (i < data.length) {
-      const ch = data[i]!;
+    while (i < chars.length) {
+      const ch = chars[i]!;
       // CSI 参数: 数字、分号、问号、空格、引号等
       if (
         (ch >= "0" && ch <= "9") ||
@@ -160,13 +260,13 @@ export class AnsiParser {
     return i;
   }
 
-  private parseOsc(data: string, start: number): number {
+  private parseOsc(chars: string[], start: number): number {
     let i = start;
-    while (i < data.length) {
+    while (i < chars.length) {
       // BEL 结束
-      if (data[i] === "\x07") return i + 1;
+      if (chars[i] === "\x07") return i + 1;
       // ST (\x1b\\) 结束
-      if (data[i] === "\x1b" && i + 1 < data.length && data[i + 1] === "\\") {
+      if (chars[i] === "\x1b" && i + 1 < chars.length && chars[i + 1] === "\\") {
         return i + 2;
       }
       i++;
@@ -174,8 +274,13 @@ export class AnsiParser {
     return i;
   }
 
-  private executeCsi(command: string, params: string) {
-    const parts = params.replace(/[?"' $]/g, "").split(";").filter(Boolean).map(Number);
+  private cursorVisible = true;
+
+  private executeCsi(command: string, rawParams: string) {
+    // 保留私有模式标记 (?)
+    const isPrivate = rawParams.startsWith("?");
+    const cleaned = rawParams.replace(/[?"' $]/g, "");
+    const parts = cleaned.split(";").filter(Boolean).map(Number);
 
     switch (command) {
       case "H": // Cursor position
@@ -222,9 +327,17 @@ export class AnsiParser {
         for (let n = 0; n < (parts[0] ?? 1); n++) this.scrollDown();
         break;
       case "m": this.applySgr(parts); break;
-      case "h": // Set mode — 忽略（如 \x1b[?1049h 切换 alternate screen）
+      case "h": // Set mode
+        if (isPrivate) {
+          // DECSET: \x1b[?25h = 显示光标, \x1b[?1049h = 切换 alternate screen, etc.
+          if (parts[0] === 25) this.cursorVisible = true;
+        }
         break;
-      case "l": // Reset mode — 忽略
+      case "l": // Reset mode
+        if (isPrivate) {
+          // DECRST: \x1b[?25l = 隐藏光标, \x1b[?1049l = 恢复 main screen, etc.
+          if (parts[0] === 25) this.cursorVisible = false;
+        }
         break;
       case "n": // Device Status Report — 忽略，不回写
         break;
@@ -375,10 +488,11 @@ export class AnsiParser {
   }
 
   private defaultCell(): Cell {
-    return { char: " ", fg: "#ffffff", bg: "#000000", bold: false, underline: false };
+    return { char: " ", fg: "#ffffff", bg: "#000000", bold: false, underline: false, width: 1 };
   }
 
-  private detectNotifyPatterns(data: string) {
+  /** 基于解析后的 Grid 内容检测通知模式（避免跨包断裂） */
+  private detectNotifyPatterns() {
     const patterns = [
       /\(y\/n\)/i,
       /\?\s*\[Y\/n\]/i,
@@ -388,10 +502,17 @@ export class AnsiParser {
       /continue\?/i,
     ];
 
-    for (const pattern of patterns) {
-      if (pattern.test(data)) {
-        this.notifyCallback?.();
-        return;
+    // 扫描最后几行即可，避免全量扫描
+    const startRow = Math.max(0, this.cursorY - 5);
+    for (let y = startRow; y <= this.cursorY && y < this.rows; y++) {
+      const row = this.grid[y];
+      if (!row) continue;
+      const line = row.map((c) => c.char).join("");
+      for (const pattern of patterns) {
+        if (pattern.test(line)) {
+          this.notifyCallback?.();
+          return;
+        }
       }
     }
   }

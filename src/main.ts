@@ -10,6 +10,11 @@ import { tabs } from "./db/schema.js";
 import { eq } from "drizzle-orm";
 
 async function main() {
+  // 0. 平台检查
+  if (process.platform !== "win32") {
+    process.stderr.write("[cmux-bun] 警告：目前仅在 Windows ConPTY 下优化，其他平台可能存在兼容性问题\n");
+  }
+
   // 1. 初始化数据库
   runMigrations();
 
@@ -62,7 +67,7 @@ async function main() {
     if (activeId && dirtyTabs.has(activeId)) {
       const parser = parsers.get(activeId);
       if (parser) {
-        ui.updateTerminalOutput(parser.getRows().join("\n"));
+        ui.updateTerminalGrid(parser.getGrid());
       }
       dirtyTabs.delete(activeId);
     }
@@ -148,7 +153,7 @@ async function main() {
           ui.setActiveTab(newActiveId);
           const parser = parsers.get(newActiveId);
           if (parser) {
-            ui.updateTerminalOutput(parser.getRows().join("\n"));
+            ui.updateTerminalGrid(parser.getGrid());
           }
         }
         return;
@@ -213,6 +218,7 @@ main().catch((err) => {
   const path = require("node:path");
   const logFile = path.join(require("node:os").tmpdir(), "cmux-crash.log");
   const msg = `[${new Date().toISOString()}] ${err?.stack ?? err}\n`;
+  
   try { fs.appendFileSync(logFile, msg); } catch {}
   // 如果终端还没被 OpenTUI 接管，至少在 stderr 留下痕迹
   process.stderr.write(msg);

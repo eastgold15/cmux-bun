@@ -20,6 +20,7 @@ export const theme = {
     borderIdle: "#333333",
     borderBusy: "#4488ff",
     borderAttention: "#ffaa00",
+    borderActive: "#00ff88",
   },
 
   // 状态栏
