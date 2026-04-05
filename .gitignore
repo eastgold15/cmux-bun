@@ -36,3 +36,4 @@ bun.lock
 cmux-clone.exe
 err.log
 out.log
+bun.lock
