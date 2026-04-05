@@ -1,0 +1,22 @@
+{
+  "name": "cmux-bun",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^25.5.2",
+    "drizzle-kit": "^0.31.10"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@opentui/core": "^0.1.96",
+  
+    "drizzle-orm": "^0.45.2",
+    "xstate": "^5.30.0",
+    "bun-pty": "^0.4.8",
+    "bun-pty-rust": "^0.3.10"
+  }
+}
