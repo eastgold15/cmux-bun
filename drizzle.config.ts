@@ -6,7 +6,7 @@ export const dbPath = `C:/Users/boer/AppData/Local/xianyuspy.electrobun.dev/dev/
 
 export default defineConfig({
   out: './drizzle',
-  schema: './src/bun/db/schema.ts',
+  schema: './src/db/schema.ts',
   dialect: 'sqlite',
   dbCredentials: {
     url: dbPath,

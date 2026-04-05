@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "typebox": {
+      "source": "epicenterhq/epicenter",
+      "sourceType": "github",
+      "computedHash": "53f26974eb6446f230fab756a9ae680467d86e90ffd3c60afa87af022b80af33"
+    }
+  }
+}
