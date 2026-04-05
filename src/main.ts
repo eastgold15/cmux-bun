@@ -10,6 +10,8 @@ import { tabs } from "./db/schema.js";
 import { eq } from "drizzle-orm";
 import { getGitBranch } from "./utils/git.js";
 import { getAnimatedBorderColor } from "./tui/animation.js";
+import { addCommand, finishCommand } from "./db/history.js";
+import { HistoryOverlay } from "./tui/history-overlay.js";
 import type { AnimationState } from "./tui/animation.js";
 
 async function main() {
@@ -56,6 +58,16 @@ async function main() {
   const tabActors = new Map<string, ReturnType<typeof createTabActor>>();
   const dirtyTabs = new Set<string>();
   const tabCwds = new Map<string, string>();
+
+  // 5.5 命令历史追踪
+  let pendingCommand = "";               // 累积当前用户输入的命令文本
+  let activeCommandId: string | null = null; // 当前正在执行的命令 DB id
+  let isSearchMode = false;              // Ctrl+R 搜索模式
+  let historyOverlay: HistoryOverlay | null = null;
+
+  // Shell prompt 模式：匹配常见 shell 的提示符结尾
+  const PROMPT_PATTERN = /[\$#>]\s*$/;
+  const PS_PATTERN = /PS\s+[A-Z]:\\.*>\s*$/;
 
   // 6. Resize 联动
   ui.onResize((cols, rows) => {
@@ -174,6 +186,44 @@ async function main() {
     const state = appActor.getSnapshot();
     const activeId = state.context.activeTabId;
 
+    // 10.0 搜索模式：拦截所有按键
+    if (isSearchMode && historyOverlay) {
+      if (key === "\x1b" || key === "\x03") {
+        // Escape / Ctrl+C: 关闭搜索
+        historyOverlay.hide();
+        historyOverlay = null;
+        isSearchMode = false;
+        ui.updateStatusBar(" Alt+1-9:Tab | Alt+r:重命名 | Alt+w:关闭 | Ctrl+R:搜索 | Ctrl+C:退出");
+      } else if (key === "\r") {
+        // Enter: 插入选中命令到 PTY
+        const selected = historyOverlay.getSelected();
+        historyOverlay.hide();
+        historyOverlay = null;
+        isSearchMode = false;
+        ui.updateStatusBar(" Alt+1-9:Tab | Alt+r:重命名 | Alt+w:关闭 | Ctrl+R:搜索 | Ctrl+C:退出");
+        if (selected && activeId) {
+          const terminal = ptyManager.get(activeId);
+          terminal?.write(selected);
+          pendingCommand = selected;
+        }
+      } else if (key === "\x1b[A") {
+        // 上箭头
+        historyOverlay.moveUp();
+      } else if (key === "\x1b[B") {
+        // 下箭头
+        historyOverlay.moveDown();
+      } else if (key === "\x7f" || key === "\x08") {
+        // Backspace
+        historyOverlay.backspaceQuery();
+        ui.updateStatusBar(` 搜索: ${historyOverlay.currentQuery} | Enter:插入 | Esc:取消 | ↑↓:选择`);
+      } else if (key.length === 1 && key.charCodeAt(0) >= 32) {
+        // 可打印字符
+        historyOverlay.appendQuery(key);
+        ui.updateStatusBar(` 搜索: ${historyOverlay.currentQuery} | Enter:插入 | Esc:取消 | ↑↓:选择`);
+      }
+      return;
+    }
+
     // 10.1 重命名模式：拦截所有按键
     if (ui.isRenaming) {
       ui.handleRenameKey(key);
@@ -248,9 +298,41 @@ async function main() {
       }
     }
 
+    // Ctrl+R: 打开历史搜索
+    if (key === "\x12") {
+      isSearchMode = true;
+      historyOverlay = new HistoryOverlay(renderer);
+      historyOverlay.show();
+      ui.updateStatusBar(" 搜索: | Enter:插入 | Esc:取消 | ↑↓:选择");
+      return;
+    }
+
     // Ctrl+C 退出（兜底在 stdin data 监听里）
     if (key === "\x03") {
       gracefulExit();
+    }
+
+    // 命令追踪：累积用户输入
+    if (activeId) {
+      if (key === "\r" || key === "\n") {
+        // Enter: 记录命令
+        const cwd = tabCwds.get(activeId) ?? process.cwd();
+        const trimmed = pendingCommand.trim();
+        if (trimmed.length > 0) {
+          activeCommandId = addCommand(activeId, trimmed, cwd);
+        }
+        pendingCommand = "";
+      } else if (key === "\x7f" || key === "\x08") {
+        // Backspace
+        pendingCommand = pendingCommand.slice(0, -1);
+      } else if (key === "\x03") {
+        // Ctrl+C: 清空累积
+        pendingCommand = "";
+      } else if (key.length === 1 && key.charCodeAt(0) >= 32) {
+        // 可打印字符
+        pendingCommand += key;
+      }
+      // 其他控制序列（方向键、Tab补全等）不修改 pendingCommand
     }
 
     // 转发给当前 PTY

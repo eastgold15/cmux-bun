@@ -23,3 +23,18 @@ export const layouts = sqliteTable("layouts", {
   order: integer("order").notNull().default(0), // 在父节点中的顺序
   sessionId: text("session_id").notNull().default("default"), // 会话 id
 });
+
+// 命令历史：记录用户在终端中执行的命令
+export const commandHistory = sqliteTable("command_history", {
+  id: text("id").primaryKey().$defaultFn(() => createId()),
+  tabId: text("tab_id").notNull(),
+  command: text("command").notNull(),
+  cwd: text("cwd").notNull(),
+  exitCode: integer("exit_code"),
+  startedAt: integer("started_at", { mode: "timestamp" }).notNull(),
+  finishedAt: integer("finished_at", { mode: "timestamp" }),
+}, (table) => [
+  index("idx_command_history_command").on(table.command),
+  index("idx_command_history_tab_id").on(table.tabId),
+  index("idx_command_history_started_at").on(table.startedAt),
+]);

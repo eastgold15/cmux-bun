@@ -44,6 +44,17 @@ export const theme = {
     bg: "#000000",
     welcome: "#888888",
   },
+
+  // 搜索 Overlay
+  overlay: {
+    bg: "#1a1a2e",
+    border: "#00ff88",
+    fg: "#ffffff",
+    selectedBg: "#2a2a4e",
+    selectedFg: "#00ff88",
+    hintFg: "#888888",
+    timeFg: "#666666",
+  },
 } as const;
 
 export type Theme = typeof theme;
