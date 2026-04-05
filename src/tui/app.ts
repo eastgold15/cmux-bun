@@ -1,5 +1,4 @@
 import {
-  createCliRenderer,
   BoxRenderable,
   TextRenderable,
 } from "@opentui/core";
@@ -8,14 +7,6 @@ import type { TabState } from "../types/index.js";
 import type { Cell } from "../parser/ansi-parser.js";
 
 const SIDEBAR_WIDTH = 22;
-
-interface TabUIItem {
-  box: BoxRenderable;
-  text: TextRenderable;
-  cwdText: TextRenderable;
-  hasUnread: boolean;
-  tabState: TabState["id"] extends infer T ? T : never;
-}
 
 export class AppUI {
   private renderer: CliRenderer;
@@ -38,19 +29,18 @@ export class AppUI {
   }
 
   private buildLayout() {
-    const cols = this.renderer.cols;
-    const rows = this.renderer.rows;
-
+    const width = this.renderer.terminalWidth;
+    const height = this.renderer.terminalHeight;
     const root = this.renderer.root;
 
-    // 侧边栏
+    // 侧边栏：固定宽度，左侧
     this.sidebar = new BoxRenderable(this.renderer, {
       id: "sidebar",
       position: "absolute",
       left: 0,
       top: 0,
       width: SIDEBAR_WIDTH,
-      height: rows - 1,
+      height: height - 1,
       border: true,
       borderStyle: "single",
       borderColor: "#444444",
@@ -62,18 +52,17 @@ export class AppUI {
       id: "sidebar-title",
       content: " cmux-bun",
       fg: "#00ff88",
-      bold: true,
     });
     this.sidebar.add(title);
 
-    // 主视窗
+    // 主视窗：自适应填满剩余空间
     this.viewport = new BoxRenderable(this.renderer, {
       id: "viewport",
       position: "absolute",
       left: SIDEBAR_WIDTH,
       top: 0,
-      width: cols - SIDEBAR_WIDTH,
-      height: rows - 1,
+      width: width - SIDEBAR_WIDTH,
+      height: height - 1,
       border: true,
       borderStyle: "single",
       borderColor: "#333333",
@@ -87,13 +76,13 @@ export class AppUI {
     });
     this.viewport.add(this.terminalOutput);
 
-    // 状态栏
+    // 状态栏：底部一行
     this.statusBar = new BoxRenderable(this.renderer, {
       id: "status-bar",
       position: "absolute",
       left: 0,
       bottom: 0,
-      width: cols,
+      width,
       height: 1,
       backgroundColor: "#1a1a2e",
       flexDirection: "row",
@@ -110,20 +99,20 @@ export class AppUI {
     root.add(this.viewport);
     root.add(this.statusBar);
 
-    // 键盘监听
+    // 键盘监听（通过 OpenTUI 事件系统）
     this.renderer.on("key", (key: string) => {
       this.onKeyHandler?.(key);
     });
 
     // 窗口大小变化
-    this.renderer.on("resize", ({ cols, rows }: { cols: number; rows: number }) => {
-      this.sidebar.height = rows - 1;
-      this.viewport.width = cols - SIDEBAR_WIDTH;
-      this.viewport.height = rows - 1;
-      this.statusBar.width = cols;
+    this.renderer.on("resize", ({ width, height }: { width: number; height: number }) => {
+      this.sidebar.height = height - 1;
+      this.viewport.width = width - SIDEBAR_WIDTH;
+      this.viewport.height = height - 1;
+      this.statusBar.width = width;
 
-      const ptyCols = cols - SIDEBAR_WIDTH - 2;
-      const ptyRows = rows - 3;
+      const ptyCols = width - SIDEBAR_WIDTH - 2;
+      const ptyRows = height - 3;
       this.onResizeHandler?.(ptyCols, ptyRows);
     });
   }
@@ -171,7 +160,7 @@ export class AppUI {
   removeTab(tabId: string) {
     const item = this.tabItems.get(tabId);
     if (item) {
-      this.sidebar.remove(item.box);
+      this.sidebar.remove(item.box.id);
       item.box.destroy();
       this.tabItems.delete(tabId);
     }
@@ -179,7 +168,6 @@ export class AppUI {
   }
 
   setActiveTab(tabId: string) {
-    // 清除之前的未读状态
     const prevItem = this.activeTabId ? this.tabItems.get(this.activeTabId) : null;
     if (prevItem) {
       prevItem.box.backgroundColor = "#1a1a2e";
@@ -197,7 +185,6 @@ export class AppUI {
       this.updateTabIndicator(tabId, current, state);
     }
 
-    // 更新视窗边框颜色
     this.updateViewportBorder();
   }
 
@@ -220,7 +207,7 @@ export class AppUI {
       indicator = "*";
       item.text.fg = "#4488ff";
     } else if (item.hasUnread) {
-      indicator = "\u25CF"; // ●
+      indicator = "\u25CF";
       item.text.fg = "#ffaa00";
     } else if (isActive) {
       item.text.fg = "#00ff88";
@@ -228,7 +215,7 @@ export class AppUI {
       item.text.fg = "#888888";
     }
 
-    const currentContent = item.text.content as string;
+    const currentContent = item.text.content as unknown as string;
     const name = currentContent.replace(/^.\s/, "");
     item.text.content = `${indicator} ${name}`;
   }
@@ -237,7 +224,7 @@ export class AppUI {
     this.terminalOutput.content = text;
   }
 
-  /** 接收 Grid Buffer 并渲染为带 ANSI 颜色的字符串 */
+  /** 接收 Grid Buffer 渲染为带 ANSI 颜色的字符串 */
   updateTerminalGrid(grid: Cell[][]) {
     const lines: string[] = [];
     const RESET = "\x1b[0m";
@@ -253,7 +240,6 @@ export class AppUI {
       for (let x = 0; x < row.length; x++) {
         const cell = row[x]!;
 
-        // 只在属性变化时输出 ANSI 码
         if (cell.fg !== prevFg || cell.bg !== prevBg || cell.bold !== prevBold || cell.underline !== prevUnderline) {
           if (prevFg !== "" || prevBg !== "" || prevBold || prevUnderline) {
             line += RESET;
@@ -296,7 +282,6 @@ export class AppUI {
     if (!item) return;
     this.updateTabIndicator(tabId, item, state);
 
-    // 更新视窗边框（如果是当前活跃 Tab）
     if (tabId === this.activeTabId) {
       this.updateViewportBorder();
     }
@@ -319,8 +304,8 @@ export class AppUI {
 
   getViewportSize() {
     return {
-      cols: this.renderer.cols - SIDEBAR_WIDTH - 2,
-      rows: this.renderer.rows - 3,
+      cols: this.renderer.terminalWidth - SIDEBAR_WIDTH - 2,
+      rows: this.renderer.terminalHeight - 3,
     };
   }
 

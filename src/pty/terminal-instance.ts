@@ -23,7 +23,10 @@ export class TerminalInstance {
     this.id = id;
     const isWin = process.platform === "win32";
     const shell = options.shell ?? (isWin ? "powershell.exe" : "/bin/bash");
-    const args = isWin && shell === "powershell.exe" ? ["-NoLogo"] : [];
+    const args = isWin && shell === "powershell.exe"
+      ? ["-NoLogo", "-Command", "chcp 65001 | Out-Null; powershell -NoLogo"]
+      : [];
+    const effectiveShell = isWin && shell === "powershell.exe" ? "cmd.exe" : shell;
 
     const ptyOptions: IPtyForkOptions = {
       name: "xterm-256color",
@@ -33,7 +36,7 @@ export class TerminalInstance {
       env: options.env ?? (process.env as Record<string, string>),
     };
 
-    this.pty = spawn(shell, args, ptyOptions);
+    this.pty = spawn(effectiveShell, args, ptyOptions);
     this.pid = this.pty.pid;
 
     this.dataSubscription = this.pty.onData((data) => {
