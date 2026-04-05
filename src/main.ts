@@ -199,6 +199,13 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("Fatal error:", err);
+  // 写入日志文件，因为 alternate screen 下 console.error 会被刷掉
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const logFile = path.join(require("node:os").tmpdir(), "cmux-crash.log");
+  const msg = `[${new Date().toISOString()}] ${err?.stack ?? err}\n`;
+  try { fs.appendFileSync(logFile, msg); } catch {}
+  // 如果终端还没被 OpenTUI 接管，至少在 stderr 留下痕迹
+  process.stderr.write(msg);
   process.exit(1);
 });
