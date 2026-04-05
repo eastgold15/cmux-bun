@@ -6,11 +6,13 @@
  *   split → 左右或上下分割，包含两个子节点
  */
 
+export type SplitDirection = "horizontal" | "vertical";
+
 export type LayoutNode =
   | { type: "leaf"; tabId: string }
   | {
       type: "split";
-      direction: "horizontal" | "vertical";
+      direction: SplitDirection;
       ratio: number; // 0~1，左/上子节点占比
       left: LayoutNode;
       right: LayoutNode;
@@ -59,7 +61,7 @@ export function splitLeaf(
   root: LayoutNode,
   targetTabId: string,
   newTabId: string,
-  direction: "horizontal" | "vertical",
+  direction: SplitDirection,
   ratio = 0.5,
 ): LayoutNode {
   if (root.type === "leaf") {
@@ -140,6 +142,61 @@ function containsTab(node: LayoutNode, tabId: string): boolean {
 export function collectLeaves(node: LayoutNode): string[] {
   if (node.type === "leaf") return [node.tabId];
   return [...collectLeaves(node.left), ...collectLeaves(node.right)];
+}
+
+/**
+ * 按方向获取相邻 leaf 的 tabId
+ */
+export function getAdjacentLeaf(
+  root: LayoutNode,
+  tabId: string,
+  direction: "up" | "down" | "left" | "right",
+  bounds: Rect,
+): string | null {
+  const rects = resolveRects(root, bounds);
+  const current = rects.get(tabId);
+  if (!current) return null;
+
+  const cx = current.x + current.width / 2;
+  const cy = current.y + current.height / 2;
+
+  let bestId: string | null = null;
+  let bestDist = Infinity;
+
+  for (const [id, rect] of rects) {
+    if (id === tabId) continue;
+    const lx = rect.x + rect.width / 2;
+    const ly = rect.y + rect.height / 2;
+
+    let valid = false;
+    let dist = Infinity;
+
+    switch (direction) {
+      case "left":
+        valid = lx < cx;
+        dist = cx - lx;
+        break;
+      case "right":
+        valid = lx > cx;
+        dist = lx - cx;
+        break;
+      case "up":
+        valid = ly < cy;
+        dist = cy - ly;
+        break;
+      case "down":
+        valid = ly > cy;
+        dist = ly - cy;
+        break;
+    }
+
+    if (valid && dist < bestDist) {
+      bestDist = dist;
+      bestId = id;
+    }
+  }
+
+  return bestId;
 }
 
 /**

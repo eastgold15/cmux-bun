@@ -5,20 +5,28 @@ import {
 import type { CliRenderer } from "@opentui/core";
 import type { TabState } from "../types/index.js";
 import type { Cell } from "../parser/ansi-parser.js";
+import type { LayoutNode, Rect } from "../layout/layout-tree.js";
+import { resolveRects } from "../layout/layout-tree.js";
 import { theme } from "../theme.js";
 
 const SIDEBAR_WIDTH = 22;
 
+interface PaneUI {
+  box: BoxRenderable;
+  text: TextRenderable;
+}
+
 export class AppUI {
   private renderer: CliRenderer;
   private sidebar!: BoxRenderable;
-  private viewport!: BoxRenderable;
+  private paneContainer!: BoxRenderable;
   private statusBar!: BoxRenderable;
   private statusText!: TextRenderable;
   private tabItems: Map<string, { box: BoxRenderable; text: TextRenderable; cwdText: TextRenderable; branchText: TextRenderable; hasUnread: boolean }> = new Map();
-  private terminalOutput!: TextRenderable;
+  private panes: Map<string, PaneUI> = new Map();
 
   private activeTabId: string | null = null;
+  private focusedPaneId: string | null = null;
   private tabStates: Map<string, TabState> = new Map();
 
   private onKeyHandler: ((key: string) => void) | null = null;
@@ -66,26 +74,16 @@ export class AppUI {
     });
     this.sidebar.add(title);
 
-    // 主视窗：自适应填满剩余空间
-    this.viewport = new BoxRenderable(this.renderer, {
-      id: "viewport",
+    // 视窗容器：填满 sidebar 右侧空间，子 pane 由布局树动态管理
+    this.paneContainer = new BoxRenderable(this.renderer, {
+      id: "pane-container",
       position: "absolute",
       left: SIDEBAR_WIDTH,
       top: 0,
       width: width - SIDEBAR_WIDTH,
       height: height - 1,
-      border: true,
-      borderStyle: "single",
-      borderColor: theme.viewport.borderIdle,
       backgroundColor: theme.terminal.bg,
     });
-
-    this.terminalOutput = new TextRenderable(this.renderer, {
-      id: "terminal-output",
-      content: "欢迎使用 cmux-bun",
-      fg: theme.terminal.welcome,
-    });
-    this.viewport.add(this.terminalOutput);
 
     // 状态栏：底部一行
     this.statusBar = new BoxRenderable(this.renderer, {
@@ -101,13 +99,13 @@ export class AppUI {
 
     this.statusText = new TextRenderable(this.renderer, {
       id: "status-text",
-      content: " Alt+1-9:Tab | Alt+r:重命名 | Alt+w:关闭 | Ctrl+C:退出",
+      content: " Alt+1-9:Tab | Alt+r:重命名 | Alt+w:关闭 | Ctrl+R:搜索 | Ctrl+C:退出",
       fg: theme.statusBar.fg,
     });
     this.statusBar.add(this.statusText);
 
     root.add(this.sidebar);
-    root.add(this.viewport);
+    root.add(this.paneContainer);
     root.add(this.statusBar);
 
     // 键盘监听（通过 OpenTUI 事件系统）
@@ -118,13 +116,12 @@ export class AppUI {
     // 窗口大小变化
     this.renderer.on("resize", ({ width, height }: { width: number; height: number }) => {
       this.sidebar.height = height - 1;
-      this.viewport.width = width - SIDEBAR_WIDTH;
-      this.viewport.height = height - 1;
+      this.paneContainer.width = width - SIDEBAR_WIDTH;
+      this.paneContainer.height = height - 1;
       this.statusBar.width = width;
 
-      const ptyCols = width - SIDEBAR_WIDTH - 2;
-      const ptyRows = height - 3;
-      this.onResizeHandler?.(ptyCols, ptyRows);
+      // 通知 main.ts 重新计算所有 pane 尺寸
+      this.onResizeHandler?.(width - SIDEBAR_WIDTH, height - 1);
     });
   }
 
@@ -183,6 +180,7 @@ export class AppUI {
       this.tabItems.delete(tabId);
     }
     this.tabStates.delete(tabId);
+    this.removePane(tabId);
   }
 
   setActiveTab(tabId: string) {
@@ -203,7 +201,7 @@ export class AppUI {
       this.updateTabIndicator(tabId, current, state);
     }
 
-    this.updateViewportBorder();
+    this.updatePaneBorders();
   }
 
   setTabUnread(tabId: string) {
@@ -250,54 +248,25 @@ export class AppUI {
   }
 
   updateTerminalOutput(text: string) {
-    this.terminalOutput.content = text;
+    if (this.focusedPaneId) {
+      const pane = this.panes.get(this.focusedPaneId);
+      pane?.text && (pane.text.content = text);
+    }
   }
 
-  /** 接收 Grid Buffer 渲染为带 ANSI 颜色的字符串 */
+  updatePaneOutput(paneId: string, text: string) {
+    const pane = this.panes.get(paneId);
+    if (pane) pane.text.content = text;
+  }
+
   updateTerminalGrid(grid: Cell[][]) {
-    const lines: string[] = [];
-    const RESET = "\x1b[0m";
+    if (this.focusedPaneId) this.updatePaneGrid(this.focusedPaneId, grid);
+  }
 
-    for (let y = 0; y < grid.length; y++) {
-      const row = grid[y]!;
-      let line = "";
-      let prevFg = "";
-      let prevBg = "";
-      let prevBold = false;
-      let prevUnderline = false;
-
-      for (let x = 0; x < row.length; x++) {
-        const cell = row[x]!;
-
-        // 跳过宽字符的占位 cell（width === 0，char 为空）
-        if (cell.width === 0) continue;
-
-        if (cell.fg !== prevFg || cell.bg !== prevBg || cell.bold !== prevBold || cell.underline !== prevUnderline) {
-          if (prevFg !== "" || prevBg !== "" || prevBold || prevUnderline) {
-            line += RESET;
-          }
-          if (cell.bold) line += "\x1b[1m";
-          if (cell.underline) line += "\x1b[4m";
-          if (cell.fg !== "#ffffff") line += `\x1b[38;2;${this.hexToRgb(cell.fg)}m`;
-          if (cell.bg !== "#000000") line += `\x1b[48;2;${this.hexToRgb(cell.bg)}m`;
-
-          prevFg = cell.fg;
-          prevBg = cell.bg;
-          prevBold = cell.bold;
-          prevUnderline = cell.underline;
-        }
-
-        line += cell.char;
-      }
-
-      if (prevFg !== "" || prevBg !== "" || prevBold || prevUnderline) {
-        line += RESET;
-      }
-
-      lines.push(line);
-    }
-
-    this.terminalOutput.content = lines.join("\n");
+  updatePaneGrid(paneId: string, grid: Cell[][]) {
+    const pane = this.panes.get(paneId);
+    if (!pane) return;
+    pane.text.content = this.renderGridToAnsi(grid);
   }
 
   private hexToRgb(hex: string): string {
@@ -313,26 +282,15 @@ export class AppUI {
     const item = this.tabItems.get(tabId);
     if (!item) return;
     this.updateTabIndicator(tabId, item, state);
-
-    if (tabId === this.activeTabId) {
-      this.updateViewportBorder();
-    }
+    this.updatePaneBorders();
   }
 
-  private updateViewportBorder() {
-    const state = this.activeTabId ? this.tabStates.get(this.activeTabId) : undefined;
-    if (state?.hasAlert) {
-      this.viewport.borderColor = theme.viewport.borderAttention;
-    } else if (state?.isBusy) {
-      this.viewport.borderColor = theme.viewport.borderBusy;
-    } else {
-      this.viewport.borderColor = theme.viewport.borderIdle;
-    }
-  }
-
-  /** 设置视窗边框颜色（由动画模块驱动） */
+  /** 设置焦点 pane 边框颜色（由动画模块驱动） */
   setViewportBorderColor(color: string) {
-    this.viewport.borderColor = color;
+    if (this.focusedPaneId) {
+      const pane = this.panes.get(this.focusedPaneId);
+      if (pane) pane.box.borderColor = color;
+    }
   }
 
   updateStatusBar(text: string) {
@@ -344,6 +302,139 @@ export class AppUI {
       cols: this.renderer.terminalWidth - SIDEBAR_WIDTH - 2,
       rows: this.renderer.terminalHeight - 3,
     };
+  }
+
+  // ─── 分屏 Pane 管理 ───
+
+  buildPanes(layoutRoot: LayoutNode) {
+    const cw = this.paneContainer.width ?? (this.renderer.terminalWidth - SIDEBAR_WIDTH);
+    const ch = this.paneContainer.height ?? (this.renderer.terminalHeight - 1);
+    const bounds: Rect = { x: 0, y: 0, width: cw, height: ch };
+    const rects = resolveRects(layoutRoot, bounds);
+
+    for (const [id, pane] of this.panes) {
+      if (!rects.has(id)) {
+        this.paneContainer.remove(pane.box.id);
+        pane.box.destroy();
+        this.panes.delete(id);
+      }
+    }
+
+    for (const [id, rect] of rects) {
+      let pane = this.panes.get(id);
+      if (!pane) {
+        const box = new BoxRenderable(this.renderer, {
+          id: `pane-${id}`,
+          position: "absolute",
+          left: rect.x,
+          top: rect.y,
+          width: rect.width,
+          height: rect.height,
+          border: true,
+          borderStyle: "single",
+          borderColor: theme.viewport.borderIdle,
+          backgroundColor: theme.terminal.bg,
+        });
+        const text = new TextRenderable(this.renderer, {
+          id: `pane-text-${id}`,
+          content: "",
+          fg: theme.terminal.fg,
+        });
+        box.add(text);
+        this.paneContainer.add(box);
+        pane = { box, text };
+        this.panes.set(id, pane);
+      } else {
+        pane.box.left = rect.x;
+        pane.box.top = rect.y;
+        pane.box.width = rect.width;
+        pane.box.height = rect.height;
+      }
+    }
+
+    this.updatePaneBorders();
+  }
+
+  focusPane(paneId: string) {
+    this.focusedPaneId = paneId;
+    this.updatePaneBorders();
+  }
+
+  private updatePaneBorders() {
+    for (const [id, pane] of this.panes) {
+      const isFocused = id === this.focusedPaneId;
+      const state = this.tabStates.get(id);
+      if (state?.hasAlert) {
+        pane.box.borderColor = theme.viewport.borderAttention;
+      } else if (state?.isBusy) {
+        pane.box.borderColor = theme.viewport.borderBusy;
+      } else if (isFocused) {
+        pane.box.borderColor = theme.viewport.borderActive;
+      } else {
+        pane.box.borderColor = theme.viewport.borderIdle;
+      }
+    }
+  }
+
+  getPaneSize(paneId: string): { cols: number; rows: number } {
+    const pane = this.panes.get(paneId);
+    if (!pane) return { cols: 80, rows: 24 };
+    return { cols: (pane.box.width ?? 80) - 2, rows: (pane.box.height ?? 24) - 2 };
+  }
+
+  getVisiblePaneSizes(): Map<string, { cols: number; rows: number }> {
+    const result = new Map<string, { cols: number; rows: number }>();
+    for (const [id] of this.panes) {
+      result.set(id, this.getPaneSize(id));
+    }
+    return result;
+  }
+
+  removePane(paneId: string) {
+    const pane = this.panes.get(paneId);
+    if (pane) {
+      this.paneContainer.remove(pane.box.id);
+      pane.box.destroy();
+      this.panes.delete(paneId);
+    }
+  }
+
+  private renderGridToAnsi(grid: Cell[][]): string {
+    const lines: string[] = [];
+    const RESET = "\x1b[0m";
+
+    for (let y = 0; y < grid.length; y++) {
+      const row = grid[y]!;
+      let line = "";
+      let prevFg = "";
+      let prevBg = "";
+      let prevBold = false;
+      let prevUnderline = false;
+
+      for (let x = 0; x < row.length; x++) {
+        const cell = row[x]!;
+        if (cell.width === 0) continue;
+
+        if (cell.fg !== prevFg || cell.bg !== prevBg || cell.bold !== prevBold || cell.underline !== prevUnderline) {
+          if (prevFg !== "" || prevBg !== "" || prevBold || prevUnderline) line += RESET;
+          if (cell.bold) line += "\x1b[1m";
+          if (cell.underline) line += "\x1b[4m";
+          if (cell.fg !== "#ffffff") line += `\x1b[38;2;${this.hexToRgb(cell.fg)}m`;
+          if (cell.bg !== "#000000") line += `\x1b[48;2;${this.hexToRgb(cell.bg)}m`;
+          prevFg = cell.fg;
+          prevBg = cell.bg;
+          prevBold = cell.bold;
+          prevUnderline = cell.underline;
+        }
+
+        line += cell.char;
+      }
+
+      if (prevFg !== "" || prevBg !== "" || prevBold || prevUnderline) line += RESET;
+      lines.push(line);
+    }
+
+    return lines.join("\n");
   }
 
   // ─── Overlay: 重命名 Tab ───

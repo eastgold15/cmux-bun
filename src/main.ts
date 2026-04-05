@@ -13,6 +13,14 @@ import { getAnimatedBorderColor } from "./tui/animation.js";
 import { addCommand, finishCommand } from "./db/history.js";
 import { HistoryOverlay } from "./tui/history-overlay.js";
 import type { AnimationState } from "./tui/animation.js";
+import {
+  type LayoutNode,
+  splitLeaf,
+  removeLeaf as removeLeafFromLayout,
+  collectLeaves,
+  getAdjacentLeaf,
+  adjustRatio,
+} from "./layout/layout-tree.js";
 
 async function main() {
   // 0. 平台检查
@@ -58,6 +66,19 @@ async function main() {
   const tabActors = new Map<string, ReturnType<typeof createTabActor>>();
   const dirtyTabs = new Set<string>();
   const tabCwds = new Map<string, string>();
+  let layoutRoot: LayoutNode | null = null;
+
+  /** 根据 layoutRoot 重建 UI pane 并 resize 对应 PTY */
+  function rebuildPanes() {
+    if (!layoutRoot) return;
+    ui.buildPanes(layoutRoot);
+    // resize 所有可见 pane 的 PTY
+    const sizes = ui.getVisiblePaneSizes();
+    for (const [id, { cols, rows }] of sizes) {
+      ptyManager.resize(id, cols, rows);
+      parsers.get(id)?.resize(cols, rows);
+    }
+  }
 
   // 5.5 命令历史追踪
   let pendingCommand = "";               // 累积当前用户输入的命令文本
@@ -70,17 +91,23 @@ async function main() {
   const PS_PATTERN = /PS\s+[A-Z]:\\.*>\s*$/;
 
   // 6. Resize 联动
-  ui.onResize((cols, rows) => {
-    const activeId = appActor.getSnapshot().context.activeTabId;
-    if (activeId) {
-      ptyManager.resize(activeId, cols, rows);
-      parsers.get(activeId)?.resize(cols, rows);
+  ui.onResize((_containerWidth, _containerHeight) => {
+    if (layoutRoot) {
+      rebuildPanes();
+    } else {
+      const activeId = appActor.getSnapshot().context.activeTabId;
+      if (activeId) {
+        const size = ui.getViewportSize();
+        ptyManager.resize(activeId, size.cols, size.rows);
+        parsers.get(activeId)?.resize(size.cols, size.rows);
+      }
     }
   });
 
   // 7. 渲染循环 ~30fps
   const renderLoop = setInterval(() => {
-    const activeId = appActor.getSnapshot().context.activeTabId;
+    const state = appActor.getSnapshot();
+    const activeId = state.context.activeTabId;
 
     // 呼吸灯动画：根据 tab 状态驱动视窗边框颜色
     if (activeId) {
@@ -91,8 +118,19 @@ async function main() {
       }
     }
 
-    // 终端内容更新
-    if (activeId && dirtyTabs.has(activeId)) {
+    // 终端内容更新：遍历所有可见 pane
+    if (layoutRoot) {
+      const leaves = collectLeaves(layoutRoot);
+      for (const tabId of leaves) {
+        if (dirtyTabs.has(tabId)) {
+          const parser = parsers.get(tabId);
+          if (parser) {
+            ui.updatePaneGrid(tabId, parser.getGrid());
+          }
+          dirtyTabs.delete(tabId);
+        }
+      }
+    } else if (activeId && dirtyTabs.has(activeId)) {
       const parser = parsers.get(activeId);
       if (parser) {
         ui.updateTerminalGrid(parser.getGrid());
@@ -134,6 +172,20 @@ async function main() {
       const activeId = appActor.getSnapshot().context.activeTabId;
       if (activeId !== id) {
         ui.setTabUnread(id);
+      }
+
+      // 命令边界检测：PTY 输出中出现 prompt → 上一条命令结束
+      if (activeCommandId && activeId === id) {
+        const lines = parser.getRows();
+        for (let i = lines.length - 1; i >= Math.max(0, lines.length - 3); i--) {
+          const line = lines[i]?.trimEnd();
+          if (!line) continue;
+          if (PROMPT_PATTERN.test(line) || PS_PATTERN.test(line)) {
+            finishCommand(activeCommandId, null);
+            activeCommandId = null;
+            break;
+          }
+        }
       }
     });
 
@@ -179,6 +231,78 @@ async function main() {
     ui.removeTab(id);
     appActor.send({ type: "REMOVE_TAB", tabId: id });
     db.delete(tabs).where(eq(tabs.id, id)).run();
+
+    // 更新布局：从 layout 中移除该叶子
+    if (layoutRoot) {
+      layoutRoot = removeLeafFromLayout(layoutRoot, id);
+      if (layoutRoot) {
+        rebuildPanes();
+      } else {
+        layoutRoot = null;
+      }
+    }
+  }
+
+  // 9.5 分屏：在指定 tab 旁创建新 pane
+  function splitPane(targetId: string, direction: "horizontal" | "vertical") {
+    const newId = `tab-${Date.now()}`;
+    const name = `Terminal`;
+
+    // 初始化布局（首次分屏）
+    if (!layoutRoot) {
+      layoutRoot = { type: "leaf", tabId: targetId };
+    }
+
+    // 在 layout 中切分
+    layoutRoot = splitLeaf(layoutRoot, targetId, newId, direction);
+
+    // 创建新 tab 的 PTY 和 parser
+    ui.buildPanes(layoutRoot);
+    const size = ui.getPaneSize(newId);
+    const parser = new AnsiParser(size.cols, size.rows);
+    parsers.set(newId, parser);
+
+    const terminal = ptyManager.create(newId, { cols: size.cols, rows: size.rows });
+
+    const tabActor = createTabActor(newId, name, process.cwd());
+    tabActor.start();
+    tabActors.set(newId, tabActor);
+
+    terminal.onData((data) => {
+      parser.feed(data);
+      tabActor.send({ type: "DATA_RECEIVED", data });
+      dirtyTabs.add(newId);
+    });
+
+    terminal.onExit((code) => {
+      tabActor.send({ type: "PROCESS_EXITED", code });
+    });
+
+    parser.onNotify(() => {
+      tabActor.send({ type: "DETECT_NOTIFY_SIGNAL" });
+    });
+
+    ui.addTab(newId, name);
+    appActor.send({ type: "ADD_TAB", tabId: newId });
+    tabCwds.set(newId, process.cwd());
+
+    // 焦点切到新 pane
+    ui.focusPane(newId);
+    appActor.send({ type: "FOCUS_PANE", tabId: newId });
+    appActor.send({ type: "SWITCH_TAB", tabId: newId });
+    ui.setActiveTab(newId);
+
+    // resize 所有可见 pane
+    rebuildPanes();
+
+    // 写入数据库
+    db.insert(tabs).values({
+      id: newId,
+      name,
+      cwd: process.cwd(),
+      shell: "cmd.exe",
+      order: appActor.getSnapshot().context.tabIds.length,
+    }).run();
   }
 
   // 10. 键盘处理
@@ -280,17 +404,37 @@ async function main() {
         if (activeId) {
           const actor = tabActors.get(activeId);
           const tabName = actor?.getSnapshot().context.name ?? "Tab";
-          // 检查 PTY 是否还在运行
           const ptyInstance = ptyManager.get(activeId);
           if (ptyInstance) {
-            // PTY 还在运行，弹确认框
             ui.showConfirmOverlay(tabName).then((confirmed) => {
               if (confirmed && activeId) {
                 removeTab(activeId);
               }
             });
           } else {
-            // PTY 已退出，直接关闭
+            removeTab(activeId);
+          }
+        }
+        return;
+      }
+
+      // Alt+\: 水平分屏
+      if (key === "\x1b\\") {
+        if (activeId) splitPane(activeId, "horizontal");
+        return;
+      }
+
+      // Alt+-: 垂直分屏
+      if (key === "\x1b-") {
+        if (activeId) splitPane(activeId, "vertical");
+        return;
+      }
+
+      // Alt+x: 关闭当前 pane
+      if (key === "\x1bx") {
+        if (activeId && layoutRoot) {
+          const leaves = collectLeaves(layoutRoot);
+          if (leaves.length > 1) {
             removeTab(activeId);
           }
         }
