@@ -1,4 +1,5 @@
-import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, index } from 'drizzle-orm/sqlite-core';
+
 import { createId } from "@paralleldrive/cuid2"; // 推荐使用 cuid2 作为唯一 ID
 
 export const tabs = sqliteTable("tabs", {
