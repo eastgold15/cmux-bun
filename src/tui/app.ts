@@ -15,7 +15,7 @@ export class AppUI {
   private viewport!: BoxRenderable;
   private statusBar!: BoxRenderable;
   private statusText!: TextRenderable;
-  private tabItems: Map<string, { box: BoxRenderable; text: TextRenderable; cwdText: TextRenderable; hasUnread: boolean }> = new Map();
+  private tabItems: Map<string, { box: BoxRenderable; text: TextRenderable; cwdText: TextRenderable; branchText: TextRenderable; hasUnread: boolean }> = new Map();
   private terminalOutput!: TextRenderable;
 
   private activeTabId: string | null = null;
@@ -23,6 +23,16 @@ export class AppUI {
 
   private onKeyHandler: ((key: string) => void) | null = null;
   private onResizeHandler: ((cols: number, rows: number) => void) | null = null;
+
+  // Overlay: 重命名
+  private renameOverlay: BoxRenderable | null = null;
+  private renameInput: TextRenderable | null = null;
+  private renameBuffer = "";
+  private renameResolve: ((value: string | null) => void) | null = null;
+
+  // Overlay: 关闭确认
+  private confirmOverlay: BoxRenderable | null = null;
+  private confirmResolve: ((value: boolean) => void) | null = null;
 
   constructor(renderer: CliRenderer) {
     this.renderer = renderer;
@@ -91,7 +101,7 @@ export class AppUI {
 
     this.statusText = new TextRenderable(this.renderer, {
       id: "status-text",
-      content: " Alt+1-9: 切换Tab | Ctrl+C: 退出",
+      content: " Alt+1-9:Tab | Alt+r:重命名 | Alt+w:关闭 | Ctrl+C:退出",
       fg: theme.statusBar.fg,
     });
     this.statusBar.add(this.statusText);
@@ -147,10 +157,17 @@ export class AppUI {
       fg: theme.sidebar.tabCwdFg,
     });
 
+    const branchText = new TextRenderable(this.renderer, {
+      id: `tab-branch-${tabId}`,
+      content: "",
+      fg: "#55aa55",
+    });
+
     tabItem.add(tabText);
     tabItem.add(cwdText);
+    tabItem.add(branchText);
     this.sidebar.add(tabItem);
-    this.tabItems.set(tabId, { box: tabItem, text: tabText, cwdText, hasUnread: false });
+    this.tabItems.set(tabId, { box: tabItem, text: tabText, cwdText, branchText, hasUnread: false });
   }
 
   private shortenCwd(cwd: string): string {
@@ -223,6 +240,13 @@ export class AppUI {
       : String(styled);
     const name = raw.replace(/^.\s/, "");
     item.text.content = `${indicator} ${name}`;
+  }
+
+  /** 更新 sidebar tab 的 git 分支显示 */
+  updateTabBranch(tabId: string, branch: string | null) {
+    const item = this.tabItems.get(tabId);
+    if (!item) return;
+    item.branchText.content = branch ? ` \uE0A0 ${branch}` : "";
   }
 
   updateTerminalOutput(text: string) {
@@ -320,6 +344,194 @@ export class AppUI {
       cols: this.renderer.terminalWidth - SIDEBAR_WIDTH - 2,
       rows: this.renderer.terminalHeight - 3,
     };
+  }
+
+  // ─── Overlay: 重命名 Tab ───
+
+  /** 显示重命名输入框，返回 Promise<string | null>（null = 取消） */
+  showRenameOverlay(currentName: string): Promise<string | null> {
+    return new Promise((resolve) => {
+      this.renameResolve = resolve;
+      this.renameBuffer = currentName;
+
+      const width = this.renderer.terminalWidth;
+      const height = this.renderer.terminalHeight;
+      const overlayW = 40;
+      const overlayH = 5;
+      const left = Math.floor((width - overlayW) / 2);
+      const top = Math.floor((height - overlayH) / 2);
+
+      this.renameOverlay = new BoxRenderable(this.renderer, {
+        id: "rename-overlay",
+        position: "absolute",
+        left,
+        top,
+        width: overlayW,
+        height: overlayH,
+        border: true,
+        borderStyle: "single",
+        borderColor: "#00ff88",
+        backgroundColor: "#1a1a2e",
+        flexDirection: "column",
+      });
+
+      const label = new TextRenderable(this.renderer, {
+        id: "rename-label",
+        content: " 重命名 Tab (Enter确认 / Esc取消)",
+        fg: "#888888",
+      });
+
+      this.renameInput = new TextRenderable(this.renderer, {
+        id: "rename-input",
+        content: ` ${this.renameBuffer}\u2588`,
+        fg: "#ffffff",
+      });
+
+      this.renameOverlay.add(label);
+      this.renameOverlay.add(this.renameInput);
+      this.renderer.root.add(this.renameOverlay);
+    });
+  }
+
+  /** 处理重命名模式下的按键，返回 true 表示已消费 */
+  handleRenameKey(key: string): boolean {
+    if (!this.renameOverlay || !this.renameInput) return false;
+
+    if (key === "\r") {
+      // Enter: 确认
+      const result = this.renameBuffer;
+      this.closeRenameOverlay();
+      this.renameResolve?.(result || null);
+      return true;
+    }
+
+    if (key === "\x1b" || key === "\x03") {
+      // Esc / Ctrl+C: 取消
+      this.closeRenameOverlay();
+      this.renameResolve?.(null);
+      return true;
+    }
+
+    if (key === "\x7f" || key === "\x08") {
+      // Backspace
+      this.renameBuffer = this.renameBuffer.slice(0, -1);
+      this.renameInput.content = ` ${this.renameBuffer}\u2588`;
+      return true;
+    }
+
+    // 可打印字符（过滤控制字符和转义序列）
+    if (key.length === 1 && key.charCodeAt(0) >= 32) {
+      this.renameBuffer += key;
+      this.renameInput.content = ` ${this.renameBuffer}\u2588`;
+      return true;
+    }
+
+    return true; // 重命名模式下拦截所有按键
+  }
+
+  private closeRenameOverlay() {
+    if (this.renameOverlay) {
+      this.renderer.root.remove(this.renameOverlay.id);
+      this.renameOverlay.destroy();
+      this.renameOverlay = null;
+      this.renameInput = null;
+      this.renameResolve = null;
+    }
+  }
+
+  get isRenaming(): boolean {
+    return this.renameOverlay !== null;
+  }
+
+  // ─── Overlay: 关闭确认 ───
+
+  /** 显示关闭确认弹窗，返回 Promise<boolean> */
+  showConfirmOverlay(tabName: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      this.confirmResolve = resolve;
+
+      const width = this.renderer.terminalWidth;
+      const height = this.renderer.terminalHeight;
+      const overlayW = 44;
+      const overlayH = 5;
+      const left = Math.floor((width - overlayW) / 2);
+      const top = Math.floor((height - overlayH) / 2);
+
+      this.confirmOverlay = new BoxRenderable(this.renderer, {
+        id: "confirm-overlay",
+        position: "absolute",
+        left,
+        top,
+        width: overlayW,
+        height: overlayH,
+        border: true,
+        borderStyle: "single",
+        borderColor: "#ff4444",
+        backgroundColor: "#1a1a2e",
+        flexDirection: "column",
+      });
+
+      const msg = new TextRenderable(this.renderer, {
+        id: "confirm-msg",
+        content: ` 关闭 "${tabName}" ?`,
+        fg: "#ffaa00",
+      });
+
+      const hint = new TextRenderable(this.renderer, {
+        id: "confirm-hint",
+        content: " Enter: 确认关闭 | Esc: 取消",
+        fg: "#888888",
+      });
+
+      this.confirmOverlay.add(msg);
+      this.confirmOverlay.add(hint);
+      this.renderer.root.add(this.confirmOverlay);
+    });
+  }
+
+  /** 处理确认弹窗下的按键，返回 true 表示已消费 */
+  handleConfirmKey(key: string): boolean {
+    if (!this.confirmOverlay) return false;
+
+    if (key === "\r" || key === "y" || key === "Y") {
+      this.closeConfirmOverlay();
+      this.confirmResolve?.(true);
+      return true;
+    }
+
+    if (key === "\x1b" || key === "\x03" || key === "n" || key === "N") {
+      this.closeConfirmOverlay();
+      this.confirmResolve?.(false);
+      return true;
+    }
+
+    return true; // 确认模式下拦截所有按键
+  }
+
+  private closeConfirmOverlay() {
+    if (this.confirmOverlay) {
+      this.renderer.root.remove(this.confirmOverlay.id);
+      this.confirmOverlay.destroy();
+      this.confirmOverlay = null;
+      this.confirmResolve = null;
+    }
+  }
+
+  get isConfirming(): boolean {
+    return this.confirmOverlay !== null;
+  }
+
+  // ─── Tab 名称更新 ───
+
+  /** 更新 tab 显示名称（重命名后调用） */
+  updateTabName(tabId: string, newName: string) {
+    const item = this.tabItems.get(tabId);
+    if (!item) return;
+    const state = this.tabStates.get(tabId);
+    this.updateTabIndicator(tabId, { text: item.text, hasUnread: item.hasUnread }, state);
+    // 强制覆盖 indicator 中的名称部分
+    const indicator = String(item.text.content).charAt(0);
+    item.text.content = `${indicator} ${newName}`;
   }
 
   destroy() {

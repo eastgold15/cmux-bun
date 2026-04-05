@@ -41,6 +41,7 @@ async function main() {
   //     直接监听 stdin 的 raw data 确保能退出
   function gracefulExit() {
     clearInterval(renderLoop);
+    clearInterval(gitPoll);
     ptyManager.killAll();
     ui.destroy();
     process.exit(0);
@@ -54,6 +55,7 @@ async function main() {
   const parsers = new Map<string, AnsiParser>();
   const tabActors = new Map<string, ReturnType<typeof createTabActor>>();
   const dirtyTabs = new Set<string>();
+  const tabCwds = new Map<string, string>();
 
   // 6. Resize 联动
   ui.onResize((cols, rows) => {
@@ -86,6 +88,15 @@ async function main() {
       dirtyTabs.delete(activeId);
     }
   }, 32);
+
+  // 7.5 Git 分支轮询（每 5 秒 + 切换 tab 时）
+  function refreshGitBranches() {
+    for (const [id, cwd] of tabCwds) {
+      const branch = getGitBranch(cwd);
+      ui.updateTabBranch(id, branch);
+    }
+  }
+  const gitPoll = setInterval(refreshGitBranches, 5000);
 
   // 8. 创建 Tab
   //    existingId: 从数据库恢复时使用数据库中的 ID，保证内存 ID 与 DB ID 一致
@@ -125,6 +136,11 @@ async function main() {
     ui.addTab(id, name);
     appActor.send({ type: "ADD_TAB", tabId: id });
 
+    // 记录 cwd 并检测 git 分支
+    const resolvedCwd = cwd ?? process.cwd();
+    tabCwds.set(id, resolvedCwd);
+    ui.updateTabBranch(id, getGitBranch(resolvedCwd));
+
     // 只有新建 Tab 才写入数据库（恢复 session 时用 existingId 跳过）
     if (!existingId) {
       db.insert(tabs).values({
@@ -144,6 +160,7 @@ async function main() {
     ptyManager.kill(id);
     parsers.delete(id);
     dirtyTabs.delete(id);
+    tabCwds.delete(id);
     const actor = tabActors.get(id);
     actor?.stop();
     tabActors.delete(id);
@@ -157,6 +174,18 @@ async function main() {
     const state = appActor.getSnapshot();
     const activeId = state.context.activeTabId;
 
+    // 10.1 重命名模式：拦截所有按键
+    if (ui.isRenaming) {
+      ui.handleRenameKey(key);
+      return;
+    }
+
+    // 10.2 关闭确认模式：拦截所有按键
+    if (ui.isConfirming) {
+      ui.handleConfirmKey(key);
+      return;
+    }
+
     // Alt+数字切换 Tab
     if (key.startsWith("\x1b") && key.length === 2) {
       const num = key.charCodeAt(1) - 49;
@@ -168,6 +197,51 @@ async function main() {
           const parser = parsers.get(newActiveId);
           if (parser) {
             ui.updateTerminalGrid(parser.getGrid());
+          }
+          const cwd = tabCwds.get(newActiveId);
+          if (cwd) ui.updateTabBranch(newActiveId, getGitBranch(cwd));
+        }
+        return;
+      }
+
+      // Alt+r: 重命名当前 Tab
+      if (key === "\x1br") {
+        if (activeId) {
+          const actor = tabActors.get(activeId);
+          const currentName = actor?.getSnapshot().context.name ?? "Tab";
+          ui.showRenameOverlay(currentName).then((newName) => {
+            if (newName && activeId) {
+              ui.updateTabName(activeId, newName);
+              // 更新 tabActor 中的 name
+              const actor = tabActors.get(activeId);
+              if (actor) {
+                (actor.getSnapshot().context as any).name = newName;
+              }
+              // 持久化到 DB
+              db.update(tabs).set({ name: newName }).where(eq(tabs.id, activeId)).run();
+            }
+          });
+        }
+        return;
+      }
+
+      // Alt+w: 关闭当前 Tab（带确认）
+      if (key === "\x1bw") {
+        if (activeId) {
+          const actor = tabActors.get(activeId);
+          const tabName = actor?.getSnapshot().context.name ?? "Tab";
+          // 检查 PTY 是否还在运行
+          const ptyInstance = ptyManager.get(activeId);
+          if (ptyInstance) {
+            // PTY 还在运行，弹确认框
+            ui.showConfirmOverlay(tabName).then((confirmed) => {
+              if (confirmed && activeId) {
+                removeTab(activeId);
+              }
+            });
+          } else {
+            // PTY 已退出，直接关闭
+            removeTab(activeId);
           }
         }
         return;
