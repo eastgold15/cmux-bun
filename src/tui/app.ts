@@ -5,6 +5,7 @@ import {
 import type { CliRenderer } from "@opentui/core";
 import type { TabState } from "../types/index.js";
 import type { Cell } from "../parser/ansi-parser.js";
+import { theme } from "../theme.js";
 
 const SIDEBAR_WIDTH = 22;
 
@@ -43,15 +44,15 @@ export class AppUI {
       height: height - 1,
       border: true,
       borderStyle: "single",
-      borderColor: "#444444",
-      backgroundColor: "#1a1a2e",
+      borderColor: theme.sidebar.border,
+      backgroundColor: theme.sidebar.bg,
       flexDirection: "column",
     });
 
     const title = new TextRenderable(this.renderer, {
       id: "sidebar-title",
       content: " cmux-bun",
-      fg: "#00ff88",
+      fg: theme.sidebar.title,
     });
     this.sidebar.add(title);
 
@@ -65,14 +66,14 @@ export class AppUI {
       height: height - 1,
       border: true,
       borderStyle: "single",
-      borderColor: "#333333",
-      backgroundColor: "#000000",
+      borderColor: theme.viewport.borderIdle,
+      backgroundColor: theme.terminal.bg,
     });
 
     this.terminalOutput = new TextRenderable(this.renderer, {
       id: "terminal-output",
       content: "欢迎使用 cmux-bun",
-      fg: "#888888",
+      fg: theme.terminal.welcome,
     });
     this.viewport.add(this.terminalOutput);
 
@@ -84,14 +85,14 @@ export class AppUI {
       bottom: 0,
       width,
       height: 1,
-      backgroundColor: "#1a1a2e",
+      backgroundColor: theme.statusBar.bg,
       flexDirection: "row",
     });
 
     this.statusText = new TextRenderable(this.renderer, {
       id: "status-text",
       content: " Alt+1-9: 切换Tab | Ctrl+C: 退出",
-      fg: "#888888",
+      fg: theme.statusBar.fg,
     });
     this.statusBar.add(this.statusText);
 
@@ -215,8 +216,12 @@ export class AppUI {
       item.text.fg = "#888888";
     }
 
-    const currentContent = item.text.content as unknown as string;
-    const name = currentContent.replace(/^.\s/, "");
+    // 从 StyledText 的 chunks 中提取纯文本
+    const styled = item.text.content;
+    const raw = "chunks" in styled
+      ? (styled as { chunks: { text: string }[] }).chunks.map((c) => c.text).join("")
+      : String(styled);
+    const name = raw.replace(/^.\s/, "");
     item.text.content = `${indicator} ${name}`;
   }
 
