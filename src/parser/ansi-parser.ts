@@ -371,16 +371,50 @@ export class AnsiParser {
         case 4: this.underline = true; break;
         case 22: this.bold = false; break;
         case 24: this.underline = false; break;
+        // 基础 8 色（前景）
         case 30: case 31: case 32: case 33:
         case 34: case 35: case 36: case 37:
           this.currentFg = this.sgrColor(p - 30);
           break;
         case 39: this.currentFg = "#ffffff"; break;
+        // 基础 8 色（背景）
         case 40: case 41: case 42: case 43:
         case 44: case 45: case 46: case 47:
           this.currentBg = this.sgrColor(p - 40);
           break;
         case 49: this.currentBg = "#000000"; break;
+        // 高亮 8 色（前景 90-97）
+        case 90: case 91: case 92: case 93:
+        case 94: case 95: case 96: case 97:
+          this.currentFg = this.sgrBrightColor(p - 90);
+          break;
+        // 高亮 8 色（背景 100-107）
+        case 100: case 101: case 102: case 103:
+        case 104: case 105: case 106: case 107:
+          this.currentBg = this.sgrBrightColor(p - 100);
+          break;
+        // 256 色或真彩色（前景）
+        case 38:
+          if (params[i + 1] === 5 && params[i + 2] !== undefined) {
+            // 256色: \x1b[38;5;n
+            this.currentFg = this.color256(params[i + 2]!);
+            i += 2;
+          } else if (params[i + 1] === 2 && params[i + 2] !== undefined && params[i + 3] !== undefined && params[i + 4] !== undefined) {
+            // 真彩色: \x1b[38;2;r;g;b
+            this.currentFg = this.rgbToHex(params[i + 2]!, params[i + 3]!, params[i + 4]!);
+            i += 4;
+          }
+          break;
+        // 256 色或真彩色（背景）
+        case 48:
+          if (params[i + 1] === 5 && params[i + 2] !== undefined) {
+            this.currentBg = this.color256(params[i + 2]!);
+            i += 2;
+          } else if (params[i + 1] === 2 && params[i + 2] !== undefined && params[i + 3] !== undefined && params[i + 4] !== undefined) {
+            this.currentBg = this.rgbToHex(params[i + 2]!, params[i + 3]!, params[i + 4]!);
+            i += 4;
+          }
+          break;
         default: break;
       }
     }
@@ -392,6 +426,40 @@ export class AnsiParser {
       "#0000ee", "#cd00cd", "#00cdcd", "#e5e5e5",
     ];
     return colors[index] ?? "#ffffff";
+  }
+
+  private sgrBrightColor(index: number): string {
+    const colors = [
+      "#7f7f7f", "#ff0000", "#00ff00", "#ffff00",
+      "#5c5cff", "#ff00ff", "#00ffff", "#ffffff",
+    ];
+    return colors[index] ?? "#ffffff";
+  }
+
+  /** 256色调色板：0-7 基础色，8-15 高亮色，16-231 6x6x6色块，232-255 灰阶 */
+  private color256(n: number): string {
+    n = Math.max(0, Math.min(255, n));
+    // 0-7: 基础色（同 sgrColor）
+    if (n < 8) return this.sgrColor(n);
+    // 8-15: 高亮色（同 sgrBrightColor）
+    if (n < 16) return this.sgrBrightColor(n - 8);
+    // 16-231: 6x6x6 RGB 色块
+    if (n < 232) {
+      const v = n - 16;
+      const b = v % 6;
+      const g = Math.floor(v / 6) % 6;
+      const r = Math.floor(v / 36);
+      const levels = [0, 95, 135, 175, 215, 255];
+      return this.rgbToHex(levels[r]!, levels[g]!, levels[b]!);
+    }
+    // 232-255: 24 级灰阶
+    const gray = 8 + (n - 232) * 10;
+    return this.rgbToHex(gray, gray, gray);
+  }
+
+  private rgbToHex(r: number, g: number, b: number): string {
+    const toHex = (v: number) => Math.max(0, Math.min(255, v)).toString(16).padStart(2, "0");
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
   }
 
   private resetAttributes() {
