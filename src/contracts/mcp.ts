@@ -65,3 +65,23 @@ export const TabInfoListSchema = Type.Object({
   activeTabId: Type.Optional(Type.String()),
 });
 export type TabInfoList = Static<typeof TabInfoListSchema>;
+
+// ─── Agent Lifecycle 通知参数 ───
+
+export const NotifyStartedParamsSchema = Type.Object({
+  tabId: Type.Optional(Type.String({ description: "目标 Tab，默认当前活跃" })),
+  task: Type.String({ description: "任务描述，如 'refactoring layout module'" }),
+});
+export type NotifyStartedParams = Static<typeof NotifyStartedParamsSchema>;
+
+export const NotifyCompletedParamsSchema = Type.Object({
+  tabId: Type.Optional(Type.String()),
+  summary: Type.Optional(Type.String({ description: "完成摘要" })),
+});
+export type NotifyCompletedParams = Static<typeof NotifyCompletedParamsSchema>;
+
+export const NotifyErrorParamsSchema = Type.Object({
+  tabId: Type.Optional(Type.String()),
+  error: Type.String({ description: "错误信息" }),
+});
+export type NotifyErrorParams = Static<typeof NotifyErrorParamsSchema>;

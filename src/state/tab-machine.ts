@@ -1,10 +1,14 @@
 import { createMachine, assign, createActor } from "xstate";
+import type { AgentLifecycle } from "../contracts/tab.js";
 
 export interface TabContext {
   id: string;
   name: string;
   cwd: string;
   lastOutput: string[];
+  agentStatus: AgentLifecycle;
+  agentTask: string;
+  agentError: string;
 }
 
 export const tabMachine = createMachine({
@@ -15,6 +19,9 @@ export const tabMachine = createMachine({
     name: "",
     cwd: "",
     lastOutput: [] as string[],
+    agentStatus: "idle" as AgentLifecycle,
+    agentTask: "",
+    agentError: "",
   },
   states: {
     idle: {
@@ -24,6 +31,13 @@ export const tabMachine = createMachine({
           actions: assign({
             lastOutput: ({ context, event }: any) =>
               [...context.lastOutput, (event as any).data].slice(-50),
+          }),
+        },
+        AGENT_STARTED: {
+          actions: assign({
+            agentStatus: () => "busy" as AgentLifecycle,
+            agentTask: ({ event }: any) => (event as any).task,
+            agentError: () => "",
           }),
         },
       },
@@ -51,6 +65,13 @@ export const tabMachine = createMachine({
         PROCESS_EXITED: "idle",
         USER_INPUT: "processing",
         DETECT_NOTIFY_SIGNAL: "attention",
+        AGENT_STARTED: {
+          actions: assign({
+            agentStatus: () => "busy" as AgentLifecycle,
+            agentTask: ({ event }: any) => (event as any).task,
+            agentError: () => "",
+          }),
+        },
       },
     },
     attention: {
@@ -64,7 +85,36 @@ export const tabMachine = createMachine({
               [...context.lastOutput, (event as any).data].slice(-50),
           }),
         },
+        AGENT_STARTED: {
+          actions: assign({
+            agentStatus: () => "busy" as AgentLifecycle,
+            agentTask: ({ event }: any) => (event as any).task,
+            agentError: () => "",
+          }),
+        },
       },
+    },
+  },
+  // Agent lifecycle 事件在任何状态都可触发 completed/error/ack
+  on: {
+    AGENT_COMPLETED: {
+      actions: assign({
+        agentStatus: () => "success" as AgentLifecycle,
+        agentError: () => "",
+      }),
+    },
+    AGENT_ERROR: {
+      actions: assign({
+        agentStatus: () => "error" as AgentLifecycle,
+        agentError: ({ event }: any) => (event as any).error,
+      }),
+    },
+    AGENT_ACK: {
+      actions: assign({
+        agentStatus: () => "idle" as AgentLifecycle,
+        agentTask: () => "",
+        agentError: () => "",
+      }),
     },
   },
 });
@@ -76,6 +126,9 @@ export function createTabActor(tabId: string, name: string, cwd: string) {
       name,
       cwd,
       lastOutput: [],
+      agentStatus: "idle" as AgentLifecycle,
+      agentTask: "",
+      agentError: "",
     },
   });
 }

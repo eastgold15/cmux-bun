@@ -28,6 +28,8 @@ export interface AgentContext {
   sendInput: (tabId: string, data: string) => void;
   getParser: (tabId: string) => AnsiParser | undefined;
   getGitBranch: (cwd: string) => string | null;
+  /** 向 Tab 状态机发送事件 */
+  sendTabEvent: (tabId: string, event: Record<string, unknown>) => void;
 }
 
 export function createHandlers(ctx: AgentContext) {
@@ -107,6 +109,29 @@ export function createHandlers(ctx: AgentContext) {
       const tabId = params.tabId ?? ctx.getActiveTabId();
       const cwd = tabId ? (ctx.getTabCwd(tabId) ?? process.cwd()) : process.cwd();
       return { branch: ctx.getGitBranch(cwd), cwd };
+    },
+
+    // ─── Agent Lifecycle 通知 ───
+
+    notify_lifecycle_started(params: { tabId?: string; task: string }): { ok: boolean } {
+      const tabId = params.tabId ?? ctx.getActiveTabId();
+      if (!tabId) throw new Error("No active tab");
+      ctx.sendTabEvent(tabId, { type: "AGENT_STARTED", task: params.task });
+      return { ok: true };
+    },
+
+    notify_lifecycle_completed(params: { tabId?: string; summary?: string }): { ok: boolean } {
+      const tabId = params.tabId ?? ctx.getActiveTabId();
+      if (!tabId) throw new Error("No active tab");
+      ctx.sendTabEvent(tabId, { type: "AGENT_COMPLETED", summary: params.summary });
+      return { ok: true };
+    },
+
+    notify_lifecycle_error(params: { tabId?: string; error: string }): { ok: boolean } {
+      const tabId = params.tabId ?? ctx.getActiveTabId();
+      if (!tabId) throw new Error("No active tab");
+      ctx.sendTabEvent(tabId, { type: "AGENT_ERROR", error: params.error });
+      return { ok: true };
     },
   };
 }

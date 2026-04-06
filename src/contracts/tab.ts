@@ -30,5 +30,14 @@ export const TabEventSchema = Type.Union([
   Type.Object({ type: Type.Literal("PROCESS_EXITED"), code: Type.Number() }),
   Type.Object({ type: Type.Literal("USER_INPUT"), key: Type.String() }),
   Type.Object({ type: Type.Literal("DETECT_NOTIFY_SIGNAL") }),
+  // Agent Lifecycle 事件
+  Type.Object({ type: Type.Literal("AGENT_STARTED"), task: Type.String() }),
+  Type.Object({ type: Type.Literal("AGENT_COMPLETED"), summary: Type.Optional(Type.String()) }),
+  Type.Object({ type: Type.Literal("AGENT_ERROR"), error: Type.String() }),
+  Type.Object({ type: Type.Literal("AGENT_ACK") }),
 ]);
 export type TabEvent = Static<typeof TabEventSchema>;
+
+// ─── AgentLifecycle ───
+
+export type AgentLifecycle = "idle" | "busy" | "success" | "error";

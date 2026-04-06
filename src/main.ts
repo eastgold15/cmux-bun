@@ -516,6 +516,10 @@ async function main() {
     },
     getParser: (tabId: string) => parsers.get(tabId),
     getGitBranch,
+    sendTabEvent: (tabId: string, event: Record<string, unknown>) => {
+      const actor = tabActors.get(tabId);
+      actor?.send(event as any);
+    },
   };
 
   const rpc = new RpcBridge(agentCtx);

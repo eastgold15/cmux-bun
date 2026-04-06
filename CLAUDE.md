@@ -15,6 +15,42 @@ bun run type-check           # TypeScript 类型检查 (tsc --noEmit)
 bun run db:push              # 推送 Drizzle schema 到 SQLite
 ```
 
+
+```
+src/
+├── contracts/      # TypeBox Schema SSOT（编译时类型 + 运行时验证）
+│   ├── tab.ts      # TabState, TabContext, TabEvent
+│   ├── pane.ts     # PaneState
+│   ├── layout.ts   # LayoutNode (递归), Rect, SplitDirection
+│   ├── terminal.ts # Cell, TerminalInstanceOptions
+│   ├── rpc.ts      # RPC 请求/响应 Schema
+│   ├── mcp.ts      # MCP 工具参数 Schema (8 tools)
+│   └── index.ts
+├── core/           # 纯数据转换，无 UI 依赖
+│   ├── pty/        # TerminalManager, TerminalInstance
+│   ├── parser/     # AnsiParser (@xterm/headless)
+│   ├── layout/     # LayoutNode 分屏布局引擎
+│   ├── repo-watcher.ts  # .git 目录 fs.watch 监听
+│   └── index.ts
+├── agents/         # "外事办"——MCP + RPC 双通道
+│   ├── handlers.ts      # 共享处理器 + AgentContext 接口（依赖注入）
+│   ├── mcp-host.ts      # MCP Server (Streamable HTTP, 端口 9421, 始终启用)
+│   ├── rpc-bridge.ts    # JSON-RPC 2.0 over HTTP (端口 9420)
+│   └── index.ts
+├── state/          # XState 状态机（不变）
+├── ui/             # 原 tui/（不变）
+├── db/             # 持久化（不变）
+└── main.ts         # 通过 AgentContext 注入 agents/
+```
+关键设计决策：
+
+TypeBox Schema 同时提供编译时类型（Static<typeof Schema>）和运行时验证（Value.Check）
+MCP 始终启用，Streamable HTTP over 端口 9421（避免 stdio 冲突）
+依赖注入：agents/ 不直接 import core/ 或 state/，通过 AgentContext 接口解耦
+get_git_context 只返回分支名 + cwd，不返回 diff——Agent 自己会查（"王不见王"）
+RepoWatcher：基于 fs.watch 监听 .git 变化驱动 UI 更新
+
+
 ## 架构
 
 ### 模块职责

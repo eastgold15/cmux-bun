@@ -11,6 +11,9 @@ import {
   ReadTabOutputParamsSchema,
   SendTerminalInputParamsSchema,
   GetGitStatusParamsSchema,
+  NotifyStartedParamsSchema,
+  NotifyCompletedParamsSchema,
+  NotifyErrorParamsSchema,
 } from "../contracts/mcp.js";
 
 const MCP_PORT = 9421;
@@ -85,6 +88,21 @@ export class McpHost {
             description: "获取 Tab 的 git 上下文坐标（分支名 + cwd）。不提供具体 diff —— Agent 自己会查",
             inputSchema: GetGitStatusParamsSchema,
           },
+          {
+            name: "notify_lifecycle_started",
+            description: "Agent 开始任务时调用，Tab 状态变为 busy，显示任务描述",
+            inputSchema: NotifyStartedParamsSchema,
+          },
+          {
+            name: "notify_lifecycle_completed",
+            description: "Agent 完成任务时调用，Tab 状态变为 success，短暂闪烁绿色提示",
+            inputSchema: NotifyCompletedParamsSchema,
+          },
+          {
+            name: "notify_lifecycle_error",
+            description: "Agent 遇到错误时调用，Tab 状态变为 error，显示错误信息",
+            inputSchema: NotifyErrorParamsSchema,
+          },
         ],
       }),
     );
@@ -132,6 +150,24 @@ export class McpHost {
             }
             case "get_git_context":
               result = this.handlers.get_git_context({ tabId: args.tabId });
+              break;
+            case "notify_lifecycle_started":
+              result = this.handlers.notify_lifecycle_started({
+                tabId: args.tabId,
+                task: args.task,
+              });
+              break;
+            case "notify_lifecycle_completed":
+              result = this.handlers.notify_lifecycle_completed({
+                tabId: args.tabId,
+                summary: args.summary,
+              });
+              break;
+            case "notify_lifecycle_error":
+              result = this.handlers.notify_lifecycle_error({
+                tabId: args.tabId,
+                error: args.error,
+              });
               break;
             default:
               throw new Error(`Unknown tool: ${name}`);

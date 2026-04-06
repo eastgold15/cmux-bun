@@ -2,7 +2,7 @@ import {
   BoxRenderable,
   TextRenderable,
 } from "@opentui/core";
-import type { CliRenderer } from "@opentui/core";
+import type { CliRenderer, KeyEvent } from "@opentui/core";
 import type { TabState } from "../contracts/index.js";
 import type { Cell } from "../core/parser/ansi-parser.js";
 import type { LayoutNode, Rect } from "../core/layout/layout-tree.js";
@@ -108,9 +108,9 @@ export class AppUI {
     root.add(this.paneContainer);
     root.add(this.statusBar);
 
-    // 键盘监听（通过 OpenTUI 事件系统）
-    this.renderer.on("key", (key: string) => {
-      this.onKeyHandler?.(key);
+    // 键盘监听（通过 OpenTUI keyInput 事件系统）
+    this.renderer.keyInput.on("keypress", (key: KeyEvent) => {
+      this.onKeyHandler?.(key.sequence);
     });
 
     // 窗口大小变化
@@ -191,6 +191,7 @@ export class AppUI {
     }
 
     this.activeTabId = tabId;
+    this.focusedPaneId = tabId;
     const current = this.tabItems.get(tabId);
     if (current) {
       current.hasUnread = false;

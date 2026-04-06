@@ -54,7 +54,7 @@ export class AnsiParser {
   private notifyCallback: (() => void) | null = null;
 
   constructor(cols = 80, rows = 24) {
-    this.term = new Terminal({ cols, rows, scrollback: 0 });
+    this.term = new Terminal({ cols, rows, scrollback: 0, allowProposedApi: true });
   }
 
   resize(cols: number, rows: number) {
