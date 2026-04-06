@@ -1,8 +1,11 @@
 import {
   BoxRenderable,
   TextRenderable,
+  StyledText,
+  TextAttributes,
+  RGBA,
 } from "@opentui/core";
-import type { CliRenderer, KeyEvent } from "@opentui/core";
+import type { CliRenderer, KeyEvent, TextChunk } from "@opentui/core";
 import type { TabState, AgentLifecycle } from "../contracts/index.js";
 import type { Cell } from "../core/parser/ansi-parser.js";
 import type { LayoutNode, Rect } from "../core/layout/layout-tree.js";
@@ -331,15 +334,7 @@ export class AppUI {
   updatePaneGrid(paneId: string, grid: Cell[][]) {
     const pane = this.panes.get(paneId);
     if (!pane) return;
-    pane.text.content = this.renderGridToAnsi(grid);
-  }
-
-  private hexToRgb(hex: string): string {
-    const h = hex.replace("#", "");
-    const r = parseInt(h.substring(0, 2), 16);
-    const g = parseInt(h.substring(2, 4), 16);
-    const b = parseInt(h.substring(4, 6), 16);
-    return `${r};${g};${b}`;
+    pane.text.content = this.renderGridToStyledText(grid);
   }
 
   updateTabState(tabId: string, state: TabState) {
@@ -471,42 +466,57 @@ export class AppUI {
     }
   }
 
-  private renderGridToAnsi(grid: Cell[][]): string {
-    const lines: string[] = [];
-    const RESET = "\x1b[0m";
+  private renderGridToStyledText(grid: Cell[][]): StyledText {
+    const chunks: TextChunk[] = [];
 
     for (let y = 0; y < grid.length; y++) {
       const row = grid[y]!;
-      let line = "";
-      let prevFg = "";
-      let prevBg = "";
-      let prevBold = false;
-      let prevUnderline = false;
+      let buf = "";
+      let bufFg = "";
+      let bufBg = "";
+      let bufBold = false;
+      let bufUnderline = false;
+
+      const flush = () => {
+        if (!buf) return;
+        const chunk: TextChunk = { __isChunk: true as const, text: buf };
+        if (bufFg) chunk.fg = RGBA.fromHex(bufFg);
+        if (bufBg) chunk.bg = RGBA.fromHex(bufBg);
+        if (bufBold || bufUnderline) {
+          let attr = 0;
+          if (bufBold) attr |= TextAttributes.BOLD;
+          if (bufUnderline) attr |= TextAttributes.UNDERLINE;
+          chunk.attributes = attr;
+        }
+        chunks.push(chunk);
+        buf = "";
+      };
 
       for (let x = 0; x < row.length; x++) {
         const cell = row[x]!;
         if (cell.width === 0) continue;
 
-        if (cell.fg !== prevFg || cell.bg !== prevBg || cell.bold !== prevBold || cell.underline !== prevUnderline) {
-          if (prevFg !== "" || prevBg !== "" || prevBold || prevUnderline) line += RESET;
-          if (cell.bold) line += "\x1b[1m";
-          if (cell.underline) line += "\x1b[4m";
-          if (cell.fg !== "#ffffff") line += `\x1b[38;2;${this.hexToRgb(cell.fg)}m`;
-          if (cell.bg !== "#000000") line += `\x1b[48;2;${this.hexToRgb(cell.bg)}m`;
-          prevFg = cell.fg;
-          prevBg = cell.bg;
-          prevBold = cell.bold;
-          prevUnderline = cell.underline;
+        const fg = cell.fg === "#ffffff" ? "" : cell.fg;
+        const bg = cell.bg === "#000000" ? "" : cell.bg;
+
+        if (fg !== bufFg || bg !== bufBg || cell.bold !== bufBold || cell.underline !== bufUnderline) {
+          flush();
+          bufFg = fg;
+          bufBg = bg;
+          bufBold = cell.bold;
+          bufUnderline = cell.underline;
         }
 
-        line += cell.char;
+        buf += cell.char;
       }
+      flush();
 
-      if (prevFg !== "" || prevBg !== "" || prevBold || prevUnderline) line += RESET;
-      lines.push(line);
+      if (y < grid.length - 1) {
+        chunks.push({ __isChunk: true as const, text: "\n" });
+      }
     }
 
-    return lines.join("\n");
+    return new StyledText(chunks);
   }
 
   // ─── Overlay: 重命名 Tab ───
