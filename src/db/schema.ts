@@ -9,6 +9,7 @@ export const tabs = sqliteTable("tabs", {
   shell: text("shell").default("cmd.exe"),
   order: integer("order").notNull(),
   isActive: integer("is_active", { mode: "boolean" }).default(false),
+  isWorktree: integer("is_worktree", { mode: "boolean" }).default(false),
 });
 
 // 布局持久化：存储分屏树结构

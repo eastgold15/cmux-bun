@@ -15,16 +15,18 @@ export class RepoWatcher {
   private onChange: () => void;
   private watcher: ReturnType<typeof watch> | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private gitDirOverride?: string;
 
-  constructor(cwd: string, onChange: () => void, debounceMs = 500) {
+  constructor(cwd: string, onChange: () => void, debounceMs = 500, gitDir?: string) {
     this.cwd = cwd;
     this.onChange = onChange;
     this.debounceMs = debounceMs;
+    this.gitDirOverride = gitDir;
     this.start();
   }
 
   private start() {
-    const gitDir = join(this.cwd, ".git");
+    const gitDir = this.gitDirOverride ?? join(this.cwd, ".git");
     if (!existsSync(gitDir)) return;
 
     try {

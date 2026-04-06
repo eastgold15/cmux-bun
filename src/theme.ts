@@ -55,6 +55,12 @@ export const theme = {
     hintFg: "#888888",
     timeFg: "#666666",
   },
+
+  // Worktree
+  worktree: {
+    indicator: "#00cccc",
+    branchFg: "#55ddaa",
+  },
 } as const;
 
 export type Theme = typeof theme;

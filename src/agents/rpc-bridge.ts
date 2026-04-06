@@ -52,6 +52,12 @@ export class RpcBridge {
               case "get_git_context":
                 result = this.handlers.get_git_context(body.params);
                 break;
+              case "create_worktree":
+                result = await this.handlers.create_worktree(body.params ?? {});
+                break;
+              case "remove_worktree":
+                result = await this.handlers.remove_worktree(body.params);
+                break;
               default:
                 return Response.json({
                   jsonrpc: "2.0",

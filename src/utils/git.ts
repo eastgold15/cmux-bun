@@ -26,3 +26,8 @@ export function getGitBranch(cwd: string): string | null {
 export function getGitShortHash(cwd: string): string | null {
   return gitCommand(["rev-parse", "--short", "HEAD"], cwd);
 }
+
+/** 获取仓库根目录（git rev-parse --show-toplevel） */
+export function getGitTopLevel(cwd: string): string | null {
+  return gitCommand(["rev-parse", "--show-toplevel"], cwd);
+}

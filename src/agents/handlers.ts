@@ -30,6 +30,12 @@ export interface AgentContext {
   getGitBranch: (cwd: string) => string | null;
   /** 向 Tab 状态机发送事件 */
   sendTabEvent: (tabId: string, event: Record<string, unknown>) => void;
+  /** 创建 worktree 并自动创建对应 Tab */
+  createWorktreeTab: (params: { branch: string; tabName?: string; baseTabId?: string }) => Promise<{ tabId: string; path: string; branch: string }>;
+  /** 移除 worktree 并关闭对应 Tab */
+  removeWorktreeTab: (tabId: string, force?: boolean) => Promise<{ ok: boolean }>;
+  /** 判断 Tab 是否为 worktree */
+  isWorktreeTab: (tabId: string) => boolean;
 }
 
 export function createHandlers(ctx: AgentContext) {
@@ -45,6 +51,7 @@ export function createHandlers(ctx: AgentContext) {
           cwd,
           isActive: id === activeId,
           gitBranch: ctx.getGitBranch(cwd) ?? undefined,
+          isWorktree: ctx.isWorktreeTab(id) || undefined,
         };
       });
       return { tabs, activeTabId: activeId ?? undefined };
@@ -132,6 +139,16 @@ export function createHandlers(ctx: AgentContext) {
       if (!tabId) throw new Error("No active tab");
       ctx.sendTabEvent(tabId, { type: "AGENT_ERROR", error: params.error });
       return { ok: true };
+    },
+
+    // ─── Worktree 管理 ───
+
+    async create_worktree(params: { branch: string; tabName?: string; baseTabId?: string }): Promise<{ tabId: string; path: string; branch: string }> {
+      return ctx.createWorktreeTab(params);
+    },
+
+    async remove_worktree(params: { tabId: string; force?: boolean }): Promise<{ ok: boolean }> {
+      return ctx.removeWorktreeTab(params.tabId, params.force);
     },
   };
 }

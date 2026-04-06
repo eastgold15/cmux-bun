@@ -49,3 +49,18 @@ export const GetTabOutputResponseSchema = Type.Object({
   gitBranch: Type.Optional(Type.String()),
 });
 export type GetTabOutputResponse = Static<typeof GetTabOutputResponseSchema>;
+
+// ─── Worktree RPC Schemas ───
+
+export const CreateWorktreeRequestSchema = Type.Object({
+  branch: Type.String(),
+  tabName: Type.Optional(Type.String()),
+  baseTabId: Type.Optional(Type.String()),
+});
+export type CreateWorktreeRequest = Static<typeof CreateWorktreeRequestSchema>;
+
+export const RemoveWorktreeRequestSchema = Type.Object({
+  tabId: Type.String(),
+  force: Type.Optional(Type.Boolean({ default: false })),
+});
+export type RemoveWorktreeRequest = Static<typeof RemoveWorktreeRequestSchema>;

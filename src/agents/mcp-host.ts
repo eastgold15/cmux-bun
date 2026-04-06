@@ -11,6 +11,8 @@ import {
   ReadTabOutputParamsSchema,
   SendTerminalInputParamsSchema,
   GetGitStatusParamsSchema,
+  CreateWorktreeParamsSchema,
+  RemoveWorktreeParamsSchema,
   NotifyStartedParamsSchema,
   NotifyCompletedParamsSchema,
   NotifyErrorParamsSchema,
@@ -103,6 +105,16 @@ export class McpHost {
             description: "Agent 遇到错误时调用，Tab 状态变为 error，显示错误信息",
             inputSchema: NotifyErrorParamsSchema,
           },
+          {
+            name: "create_worktree",
+            description: "为指定分支创建 git worktree（在 .git-worktrees/ 目录下），并自动创建对应终端 Tab",
+            inputSchema: CreateWorktreeParamsSchema,
+          },
+          {
+            name: "remove_worktree",
+            description: "关闭 worktree Tab 并移除对应的 git worktree 目录",
+            inputSchema: RemoveWorktreeParamsSchema,
+          },
         ],
       }),
     );
@@ -167,6 +179,19 @@ export class McpHost {
               result = this.handlers.notify_lifecycle_error({
                 tabId: args.tabId,
                 error: args.error,
+              });
+              break;
+            case "create_worktree":
+              result = await this.handlers.create_worktree({
+                branch: args.branch,
+                tabName: args.tabName,
+                baseTabId: args.baseTabId,
+              });
+              break;
+            case "remove_worktree":
+              result = await this.handlers.remove_worktree({
+                tabId: args.tabId,
+                force: args.force,
               });
               break;
             default:

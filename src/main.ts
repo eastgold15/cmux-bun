@@ -9,7 +9,9 @@ import { db, runMigrations } from "./db/connection.js";
 import { tabs } from "./db/schema.js";
 import { eq } from "drizzle-orm";
 import { getGitBranch } from "./utils/git.js";
+import { isWorktree as checkIsWorktree, createWorktree, removeWorktree as removeWorktreeDir } from "./utils/worktree.js";
 import { getAnimatedBorderColor } from "./ui/animation.js";
+import { RepoWatcherManager } from "./core/repo-watcher-manager.js";
 import { addCommand, finishCommand } from "./db/history.js";
 import { HistoryOverlay } from "./ui/history-overlay.js";
 import type { AnimationState } from "./ui/animation.js";
@@ -66,6 +68,8 @@ async function main() {
   const tabActors = new Map<string, ReturnType<typeof createTabActor>>();
   const dirtyTabs = new Set<string>();
   const tabCwds = new Map<string, string>();
+  const tabWorktreeInfo = new Map<string, { isWorktree: boolean }>();
+  const watcherManager = new RepoWatcherManager();
   let layoutRoot: LayoutNode | null = null;
 
   /** 根据 layoutRoot 重建 UI pane 并 resize 对应 PTY */
@@ -200,10 +204,23 @@ async function main() {
     ui.addTab(id, name);
     appActor.send({ type: "ADD_TAB", tabId: id });
 
+    // 初始化单 pane 布局（确保右侧有 viewport 显示终端内容）
+    if (!layoutRoot) {
+      layoutRoot = { type: "leaf", tabId: id };
+      rebuildPanes();
+      ui.focusPane(id);
+    }
+
     // 记录 cwd 并检测 git 分支
     const resolvedCwd = cwd ?? process.cwd();
     tabCwds.set(id, resolvedCwd);
     ui.updateTabBranch(id, getGitBranch(resolvedCwd));
+
+    // 注册 RepoWatcher（git 变化时刷新分支显示）
+    watcherManager.watch(id, resolvedCwd, () => {
+      const branch = getGitBranch(resolvedCwd);
+      ui.updateTabBranch(id, branch);
+    });
 
     // 只有新建 Tab 才写入数据库（恢复 session 时用 existingId 跳过）
     if (!existingId) {
@@ -221,6 +238,7 @@ async function main() {
 
   // 9. 删除 Tab
   function removeTab(id: string) {
+    watcherManager.unwatch(id);
     ptyManager.kill(id);
     parsers.delete(id);
     dirtyTabs.delete(id);
@@ -241,6 +259,62 @@ async function main() {
         layoutRoot = null;
       }
     }
+  }
+
+  // 9.4 Worktree 管理：创建 worktree 并自动创建 Tab
+  async function createWorktreeTab(params: {
+    branch: string;
+    tabName?: string;
+    baseTabId?: string;
+  }): Promise<{ tabId: string; path: string; branch: string }> {
+    // 确定主仓库路径
+    let mainRepoPath: string;
+    if (params.baseTabId) {
+      mainRepoPath = tabCwds.get(params.baseTabId) ?? process.cwd();
+    } else {
+      const activeId = appActor.getSnapshot().context.activeTabId;
+      mainRepoPath = activeId ? (tabCwds.get(activeId) ?? process.cwd()) : process.cwd();
+    }
+
+    // 创建 worktree
+    const { path: worktreePath, branch } = createWorktree({
+      mainRepoPath,
+      branch: params.branch,
+    });
+
+    const tabName = params.tabName ?? branch;
+    const tabId = createTab(tabName, worktreePath);
+
+    // 标记为 worktree
+    tabWorktreeInfo.set(tabId, { isWorktree: true });
+
+    // 更新 UI 显示 worktree 标识
+    ui.updateTabWorktree(tabId, true);
+
+    // 持久化 isWorktree 到数据库
+    db.update(tabs).set({ isWorktree: true }).where(eq(tabs.id, tabId)).run();
+
+    return { tabId, path: worktreePath, branch };
+  }
+
+  // 9.4.1 Worktree 管理：移除 worktree 并关闭 Tab
+  async function removeWorktreeTab(tabId: string, force = false): Promise<{ ok: boolean }> {
+    const cwd = tabCwds.get(tabId);
+    if (!cwd) throw new Error(`Tab ${tabId} not found`);
+
+    const removed = removeWorktreeDir(cwd, force);
+    if (!removed && !force) {
+      throw new Error("移除 worktree 失败，可能存在未提交的更改。使用 force=true 强制移除");
+    }
+
+    tabWorktreeInfo.delete(tabId);
+    removeTab(tabId);
+    return { ok: true };
+  }
+
+  // 判断 Tab 是否为 worktree
+  function isWorktreeTab(tabId: string): boolean {
+    return tabWorktreeInfo.get(tabId)?.isWorktree ?? false;
   }
 
   // 9.5 分屏：在指定 tab 旁创建新 pane
@@ -520,6 +594,9 @@ async function main() {
       const actor = tabActors.get(tabId);
       actor?.send(event as any);
     },
+    createWorktreeTab,
+    removeWorktreeTab,
+    isWorktreeTab,
   };
 
   const rpc = new RpcBridge(agentCtx);
@@ -533,6 +610,11 @@ async function main() {
   if (savedTabs.length > 0) {
     for (const tab of savedTabs) {
       createTab(tab.name, tab.cwd ?? undefined, tab.shell ?? undefined, tab.id);
+      // 恢复 worktree 元数据
+      if (tab.isWorktree || checkIsWorktree(tab.cwd ?? process.cwd())) {
+        tabWorktreeInfo.set(tab.id, { isWorktree: true });
+        ui.updateTabWorktree(tab.id, true);
+      }
     }
     const firstId = appActor.getSnapshot().context.tabIds[0];
     if (firstId) ui.setActiveTab(firstId);

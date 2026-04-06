@@ -49,6 +49,21 @@ export const GetGitStatusParamsSchema = Type.Object({
 });
 export type GetGitStatusParams = Static<typeof GetGitStatusParamsSchema>;
 
+// ─── Worktree 工具参数 ───
+
+export const CreateWorktreeParamsSchema = Type.Object({
+  branch: Type.String({ description: "要创建 worktree 的分支名" }),
+  tabName: Type.Optional(Type.String({ description: "Tab 名称，默认使用分支名" })),
+  baseTabId: Type.Optional(Type.String({ description: "基于哪个 Tab 的 cwd 作为主仓库路径，默认当前活跃 Tab" })),
+});
+export type CreateWorktreeParams = Static<typeof CreateWorktreeParamsSchema>;
+
+export const RemoveWorktreeParamsSchema = Type.Object({
+  tabId: Type.String({ description: "关联 worktree 的 Tab ID" }),
+  force: Type.Optional(Type.Boolean({ description: "强制移除", default: false })),
+});
+export type RemoveWorktreeParams = Static<typeof RemoveWorktreeParamsSchema>;
+
 // ─── Tab Info (MCP 返回结构) ───
 
 export const TabInfoSchema = Type.Object({
@@ -57,6 +72,7 @@ export const TabInfoSchema = Type.Object({
   cwd: Type.String(),
   isActive: Type.Boolean(),
   gitBranch: Type.Optional(Type.String()),
+  isWorktree: Type.Optional(Type.Boolean()),
 });
 export type TabInfo = Static<typeof TabInfoSchema>;
 

@@ -22,7 +22,7 @@ export class AppUI {
   private paneContainer!: BoxRenderable;
   private statusBar!: BoxRenderable;
   private statusText!: TextRenderable;
-  private tabItems: Map<string, { box: BoxRenderable; text: TextRenderable; cwdText: TextRenderable; branchText: TextRenderable; hasUnread: boolean }> = new Map();
+  private tabItems: Map<string, { box: BoxRenderable; text: TextRenderable; cwdText: TextRenderable; branchText: TextRenderable; hasUnread: boolean; isWorktree: boolean }> = new Map();
   private panes: Map<string, PaneUI> = new Map();
 
   private activeTabId: string | null = null;
@@ -164,7 +164,7 @@ export class AppUI {
     tabItem.add(cwdText);
     tabItem.add(branchText);
     this.sidebar.add(tabItem);
-    this.tabItems.set(tabId, { box: tabItem, text: tabText, cwdText, branchText, hasUnread: false });
+    this.tabItems.set(tabId, { box: tabItem, text: tabText, cwdText, branchText, hasUnread: false, isWorktree: false });
   }
 
   private shortenCwd(cwd: string): string {
@@ -245,7 +245,22 @@ export class AppUI {
   updateTabBranch(tabId: string, branch: string | null) {
     const item = this.tabItems.get(tabId);
     if (!item) return;
+    const color = item.isWorktree ? theme.worktree.branchFg : "#55aa55";
+    item.branchText.fg = color;
     item.branchText.content = branch ? ` \uE0A0 ${branch}` : "";
+  }
+
+  /** 标记/取消 worktree 状态（影响分支显示颜色） */
+  updateTabWorktree(tabId: string, isWorktree: boolean) {
+    const item = this.tabItems.get(tabId);
+    if (!item) return;
+    item.isWorktree = isWorktree;
+    // worktree Tab 的分支文本使用特殊颜色
+    if (isWorktree) {
+      item.branchText.fg = theme.worktree.branchFg;
+    } else {
+      item.branchText.fg = "#55aa55";
+    }
   }
 
   updateTerminalOutput(text: string) {
