@@ -10,6 +10,13 @@ export interface Cell {
   width: number; // 0 = 占位(wide char 第二格), 1 = 窄, 2 = 宽(CJK/emoji)
 }
 
+export interface CursorInfo {
+  x: number;       // 列号（0-based）
+  y: number;       // 行号（0-based，clamp 到可见范围）
+  style: "block" | "underline" | "bar" | "default";
+  visible: boolean;
+}
+
 /** xterm.js 256 色调色板（标准终端色） */
 const PALETTE_256 = build256Palette();
 
@@ -179,5 +186,27 @@ export class AnsiParser {
 
   private defaultCell(): Cell {
     return { char: " ", fg: "#ffffff", bg: "#000000", bold: false, underline: false, width: 1 };
+  }
+
+  /** 从 xterm buffer 提取当前光标位置和样式 */
+  getCursorInfo(): CursorInfo {
+    const buf = this.term.buffer.active;
+    const cursorX = Math.min(buf.cursorX, this.term.cols - 1);
+    const cursorY = Math.max(0, Math.min(buf.cursorY, this.term.rows - 1));
+
+    // cursorStyle: 0=block, 1=underline, 2=bar (xterm default is block)
+    const rawStyle = (this.term as any).options?.cursorStyle ?? "block";
+    const styleMap: Record<string, CursorInfo["style"]> = {
+      block: "block",
+      underline: "underline",
+      bar: "bar",
+    };
+
+    return {
+      x: cursorX,
+      y: cursorY,
+      style: styleMap[rawStyle] ?? "block",
+      visible: true,
+    };
   }
 }

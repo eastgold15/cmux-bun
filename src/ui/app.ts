@@ -5,9 +5,9 @@ import {
   TextAttributes,
   RGBA,
 } from "@opentui/core";
-import type { CliRenderer, KeyEvent, TextChunk } from "@opentui/core";
+import type { CliRenderer, KeyEvent, TextChunk, CursorStyleOptions } from "@opentui/core";
 import type { TabState, AgentLifecycle } from "../contracts/index.js";
-import type { Cell } from "../core/parser/ansi-parser.js";
+import type { Cell, CursorInfo } from "../core/parser/ansi-parser.js";
 import type { LayoutNode, Rect } from "../core/layout/layout-tree.js";
 import { resolveRects } from "../core/layout/layout-tree.js";
 import { theme } from "../theme.js";
@@ -440,6 +440,37 @@ export class AppUI {
     const pane = this.panes.get(paneId);
     if (!pane) return { cols: 80, rows: 24 };
     return { cols: (pane.box.width ?? 80) - 2, rows: (pane.box.height ?? 24) - 2 };
+  }
+
+  /** 设置活跃 pane 的终端光标位置和样式 */
+  setPaneCursor(paneId: string, cursorInfo: CursorInfo): void {
+    const pane = this.panes.get(paneId);
+    if (!pane) return;
+
+    const paneLeft = typeof pane.box.left === "number" ? pane.box.left : 0;
+    const paneTop = typeof pane.box.top === "number" ? pane.box.top : 0;
+
+    // pane 边框占 1 字符，内容区域从 (left+1, top+1) 开始
+    const screenX = paneLeft + 1 + cursorInfo.x;
+    const screenY = paneTop + 1 + cursorInfo.y;
+
+    this.renderer.setCursorPosition(screenX, screenY, cursorInfo.visible);
+
+    // 映射光标样式：xterm "bar" → OpenTUI "line"
+    const styleMap: Record<string, CursorStyleOptions["style"]> = {
+      block: "block",
+      bar: "line",
+      underline: "underline",
+      default: "default",
+    };
+    this.renderer.setCursorStyle({
+      style: styleMap[cursorInfo.style] ?? "block",
+    });
+  }
+
+  /** 隐藏光标（非活跃 pane / 无活跃 pane 时调用） */
+  hideCursor(): void {
+    this.renderer.setCursorPosition(0, 0, false);
   }
 
   getVisiblePaneSizes(): Map<string, { cols: number; rows: number }> {

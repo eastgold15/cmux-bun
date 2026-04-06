@@ -103,6 +103,16 @@ async function main() {
       }
       tabManager.clearDirty(activeId);
     }
+
+    // 终端光标渲染：仅活跃 pane 显示光标
+    if (activeId) {
+      const parser = tabManager.getParser(activeId);
+      if (parser) {
+        ui.setPaneCursor(activeId, parser.getCursorInfo());
+      }
+    } else {
+      ui.hideCursor();
+    }
   }, 32);
 
   // 7.5 Git 分支轮询（每 5 秒）
