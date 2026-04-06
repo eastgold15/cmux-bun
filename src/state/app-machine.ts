@@ -1,5 +1,5 @@
 import { createMachine, assign, createActor } from "xstate";
-import type { LayoutNode } from "../layout/layout-tree.js";
+import type { LayoutNode } from "../core/layout/layout-tree.js";
 
 export interface AppContext {
   activeTabId: string | null;

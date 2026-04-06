@@ -1,18 +1,18 @@
 import { createCliRenderer } from "@opentui/core";
-import { TerminalManager } from "./pty/terminal-manager.js";
-import { AppUI } from "./tui/app.js";
-import { AnsiParser } from "./parser/ansi-parser.js";
+import { TerminalManager } from "./core/pty/terminal-manager.js";
+import { AppUI } from "./ui/app.js";
+import { AnsiParser } from "./core/parser/ansi-parser.js";
 import { createAppActor } from "./state/app-machine.js";
 import { createTabActor } from "./state/tab-machine.js";
-import { RpcServer } from "./rpc/server.js";
+import { RpcBridge, McpHost, type AgentContext } from "./agents/index.js";
 import { db, runMigrations } from "./db/connection.js";
 import { tabs } from "./db/schema.js";
 import { eq } from "drizzle-orm";
 import { getGitBranch } from "./utils/git.js";
-import { getAnimatedBorderColor } from "./tui/animation.js";
+import { getAnimatedBorderColor } from "./ui/animation.js";
 import { addCommand, finishCommand } from "./db/history.js";
-import { HistoryOverlay } from "./tui/history-overlay.js";
-import type { AnimationState } from "./tui/animation.js";
+import { HistoryOverlay } from "./ui/history-overlay.js";
+import type { AnimationState } from "./ui/animation.js";
 import {
   type LayoutNode,
   splitLeaf,
@@ -20,7 +20,7 @@ import {
   collectLeaves,
   getAdjacentLeaf,
   adjustRatio,
-} from "./layout/layout-tree.js";
+} from "./core/layout/layout-tree.js";
 
 async function main() {
   // 0. 平台检查
@@ -495,23 +495,34 @@ async function main() {
     }
   });
 
-  // 12. RPC
-  const rpc = new RpcServer();
-  rpc.on("create_tab", ({ name, cwd, shell }: { name: string; cwd?: string; shell?: string }) => {
-    return createTab(name, cwd, shell);
-  });
-  rpc.on("focus_tab", ({ tabId }: { tabId: string }) => {
-    appActor.send({ type: "SWITCH_TAB", tabId });
-    return { ok: true };
-  });
-  rpc.on("close_tab", ({ tabId }: { tabId: string }) => {
-    removeTab(tabId);
-    return { ok: true };
-  });
-  rpc.on("list_tabs", () => {
-    return appActor.getSnapshot().context.tabIds;
-  });
+  // 12. Agents (RPC Bridge + MCP Host)
+  const agentCtx: AgentContext = {
+    getActiveTabId: () => appActor.getSnapshot().context.activeTabId,
+    getTabIds: () => appActor.getSnapshot().context.tabIds as string[],
+    getTabName: (id: string) => {
+      const actor = tabActors.get(id);
+      return actor?.getSnapshot().context.name ?? "Tab";
+    },
+    getTabCwd: (id: string) => tabCwds.get(id),
+    createTab,
+    removeTab,
+    focusTab: (tabId: string) => {
+      appActor.send({ type: "SWITCH_TAB", tabId });
+    },
+    splitPane,
+    sendInput: (tabId: string, data: string) => {
+      const terminal = ptyManager.get(tabId);
+      terminal?.write(data);
+    },
+    getParser: (tabId: string) => parsers.get(tabId),
+    getGitBranch,
+  };
+
+  const rpc = new RpcBridge(agentCtx);
   rpc.start();
+
+  const mcp = new McpHost(agentCtx);
+  mcp.start();
 
   // 13. 恢复 session：用数据库中的 id 作为 existingId，保证 ID 一致
   const savedTabs = db.select().from(tabs).orderBy(tabs.order).all();

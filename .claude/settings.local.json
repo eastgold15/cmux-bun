@@ -3,7 +3,9 @@
     "allow": [
       "Bash(bun init:*)",
       "mcp__context7__resolve-library-id",
-      "mcp__context7__query-docs"
+      "mcp__context7__query-docs",
+      "Bash(node -e \"const { Type, Static } = require\\('typebox'\\); console.log\\('Type.Object:', typeof Type.Object\\); const { Value } = require\\('typebox/value'\\); console.log\\('Value.Check:', typeof Value.Check\\);\")",
+      "Bash(bun run:*)"
     ]
   }
 }

@@ -17,6 +17,7 @@
     "typescript": "^5"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@opentui/core": "^0.1.96",
     "@paralleldrive/cuid2": "^3.3.0",
     "@xterm/headless": "^6.0.0",

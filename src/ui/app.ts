@@ -3,10 +3,10 @@ import {
   TextRenderable,
 } from "@opentui/core";
 import type { CliRenderer } from "@opentui/core";
-import type { TabState } from "../types/index.js";
-import type { Cell } from "../parser/ansi-parser.js";
-import type { LayoutNode, Rect } from "../layout/layout-tree.js";
-import { resolveRects } from "../layout/layout-tree.js";
+import type { TabState } from "../contracts/index.js";
+import type { Cell } from "../core/parser/ansi-parser.js";
+import type { LayoutNode, Rect } from "../core/layout/layout-tree.js";
+import { resolveRects } from "../core/layout/layout-tree.js";
 import { theme } from "../theme.js";
 
 const SIDEBAR_WIDTH = 22;
