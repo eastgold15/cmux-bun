@@ -84,18 +84,22 @@ async function main() {
     if (tabManager.getLayoutRoot()) {
       const leaves = tabManager.getVisibleLeaves();
       for (const tabId of leaves) {
-        if (tabManager.isDirty(tabId)) {
+        if (tabManager.isDirty(tabId) && tabManager.needsRender(tabId)) {
           const parser = tabManager.getParser(tabId);
           if (parser) {
             ui.updatePaneGrid(tabId, parser.getGrid());
           }
           tabManager.clearDirty(tabId);
+        } else if (tabManager.isDirty(tabId)) {
+          tabManager.clearDirty(tabId);
         }
       }
     } else if (activeId && tabManager.isDirty(activeId)) {
-      const parser = tabManager.getParser(activeId);
-      if (parser) {
-        ui.updateTerminalGrid(parser.getGrid());
+      if (tabManager.needsRender(activeId)) {
+        const parser = tabManager.getParser(activeId);
+        if (parser) {
+          ui.updateTerminalGrid(parser.getGrid());
+        }
       }
       tabManager.clearDirty(activeId);
     }

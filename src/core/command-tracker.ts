@@ -35,7 +35,7 @@ export class CommandTracker {
       // Ctrl+C: 清空累积
       this.pendingCommand = "";
       return true;
-    } else if (key.length === 1 && key.charCodeAt(0) >= 32) {
+    } else if (key.length >= 1 && !/^\x1b/.test(key) && key.charCodeAt(0) >= 32) {
       // 可打印字符
       this.pendingCommand += key;
       return true;

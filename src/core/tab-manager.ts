@@ -39,6 +39,7 @@ export class TabManager {
   private parsers = new Map<string, AnsiParser>();
   private tabActors = new Map<string, ReturnType<typeof createTabActor>>();
   private dirtyTabs = new Set<string>();
+  private lastRenderedGen = new Map<string, number>();
   private tabCwds = new Map<string, string>();
   private tabWorktreeInfo = new Map<string, { isWorktree: boolean }>();
   private watcherManager = new RepoWatcherManager();
@@ -148,6 +149,7 @@ export class TabManager {
     this.ctx.ptyManager.kill(id);
     this.parsers.delete(id);
     this.dirtyTabs.delete(id);
+    this.lastRenderedGen.delete(id);
     this.tabCwds.delete(id);
     this.tabWorktreeInfo.delete(id);
     const actor = this.tabActors.get(id);
@@ -313,12 +315,21 @@ export class TabManager {
     return this.dirtyTabs.has(tabId);
   }
 
+  /** 检查 parser 的 generation 是否与上次渲染不同，避免无变化时重建 StyledText */
+  needsRender(tabId: string): boolean {
+    const parser = this.parsers.get(tabId);
+    if (!parser) return false;
+    return parser.getGeneration() !== this.lastRenderedGen.get(tabId);
+  }
+
   markDirty(tabId: string): void {
     this.dirtyTabs.add(tabId);
   }
 
   clearDirty(tabId: string): void {
     this.dirtyTabs.delete(tabId);
+    const parser = this.parsers.get(tabId);
+    if (parser) this.lastRenderedGen.set(tabId, parser.getGeneration());
   }
 
   getDirtyTabIds(): string[] {

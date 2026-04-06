@@ -52,6 +52,7 @@ function hex(n: number): string {
 export class AnsiParser {
   private term: Terminal;
   private notifyCallback: (() => void) | null = null;
+  private generation = 0;
 
   constructor(cols = 80, rows = 24) {
     this.term = new Terminal({ cols, rows, scrollback: 0, allowProposedApi: true });
@@ -59,6 +60,7 @@ export class AnsiParser {
 
   resize(cols: number, rows: number) {
     this.term.resize(cols, rows);
+    this.generation++;
   }
 
   onNotify(callback: () => void) {
@@ -67,7 +69,12 @@ export class AnsiParser {
 
   feed(data: string) {
     this.term.write(data);
+    this.generation++;
     this.detectNotifyPatterns();
+  }
+
+  getGeneration(): number {
+    return this.generation;
   }
 
   /** 将 xterm 内部 buffer 转为 Cell[][] 供 UI 层渲染 */

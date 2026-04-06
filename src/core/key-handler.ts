@@ -106,7 +106,7 @@ export class KeyHandler {
     } else if (key === "\x7f" || key === "\x08") {
       this.historyOverlay!.backspaceQuery();
       this.updateSearchStatusBar();
-    } else if (key.length === 1 && key.charCodeAt(0) >= 32) {
+    } else if (key.length >= 1 && !/^\x1b/.test(key) && key.charCodeAt(0) >= 32) {
       this.historyOverlay!.appendQuery(key);
       this.updateSearchStatusBar();
     }

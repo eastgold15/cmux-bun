@@ -25,7 +25,7 @@ export class AppUI {
   private paneContainer!: BoxRenderable;
   private statusBar!: BoxRenderable;
   private statusText!: TextRenderable;
-  private tabItems: Map<string, { box: BoxRenderable; text: TextRenderable; cwdText: TextRenderable; branchText: TextRenderable; hasUnread: boolean; isWorktree: boolean }> = new Map();
+  private tabItems: Map<string, { box: BoxRenderable; text: TextRenderable; cwdText: TextRenderable; branchText: TextRenderable; hasUnread: boolean; isWorktree: boolean; name: string }> = new Map();
   private panes: Map<string, PaneUI> = new Map();
 
   private activeTabId: string | null = null;
@@ -169,7 +169,7 @@ export class AppUI {
     tabItem.add(cwdText);
     tabItem.add(branchText);
     this.sidebar.add(tabItem);
-    this.tabItems.set(tabId, { box: tabItem, text: tabText, cwdText, branchText, hasUnread: false, isWorktree: false });
+    this.tabItems.set(tabId, { box: tabItem, text: tabText, cwdText, branchText, hasUnread: false, isWorktree: false, name });
   }
 
   private shortenCwd(cwd: string): string {
@@ -246,7 +246,7 @@ export class AppUI {
     }
   }
 
-  private updateTabIndicator(tabId: string, item: { text: TextRenderable; hasUnread: boolean }, state?: TabState) {
+  private updateTabIndicator(tabId: string, item: { text: TextRenderable; hasUnread: boolean; name: string }, state?: TabState) {
     const isActive = tabId === this.activeTabId;
     const agentStatus = this.agentStatuses.get(tabId);
     let indicator = " ";
@@ -276,20 +276,13 @@ export class AppUI {
       item.text.fg = theme.indicator.idle;
     }
 
-    // 从 StyledText 的 chunks 中提取纯文本
-    const styled = item.text.content;
-    const raw = "chunks" in styled
-      ? (styled as { chunks: { text: string }[] }).chunks.map((c) => c.text).join("")
-      : String(styled);
-    const name = raw.replace(/^.\s/, "");
-
     // busy 时在名称后追加任务描述
     if (agentStatus === "busy") {
       const task = this.agentTasks.get(tabId) ?? "";
       const suffix = task.length > 0 ? ` \u2026${task.slice(0, 20)}` : "";
-      item.text.content = `${indicator} ${name}${suffix}`;
+      item.text.content = `${indicator} ${item.name}${suffix}`;
     } else {
-      item.text.content = `${indicator} ${name}`;
+      item.text.content = `${indicator} ${item.name}`;
     }
   }
 
@@ -593,7 +586,7 @@ export class AppUI {
     }
 
     // 可打印字符（过滤控制字符和转义序列）
-    if (key.length === 1 && key.charCodeAt(0) >= 32) {
+    if (key.length >= 1 && !/^\x1b/.test(key) && key.charCodeAt(0) >= 32) {
       this.renameBuffer += key;
       this.renameInput.content = ` ${this.renameBuffer}\u2588`;
       return true;
@@ -700,11 +693,9 @@ export class AppUI {
   updateTabName(tabId: string, newName: string) {
     const item = this.tabItems.get(tabId);
     if (!item) return;
+    item.name = newName;
     const state = this.tabStates.get(tabId);
-    this.updateTabIndicator(tabId, { text: item.text, hasUnread: item.hasUnread }, state);
-    // 强制覆盖 indicator 中的名称部分
-    const indicator = String(item.text.content).charAt(0);
-    item.text.content = `${indicator} ${newName}`;
+    this.updateTabIndicator(tabId, item, state);
   }
 
   destroy() {
