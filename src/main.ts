@@ -29,6 +29,7 @@ async function main() {
   // 3. 启动渲染器
   const renderer = await createCliRenderer({
     exitOnCtrlC: false,
+    useMouse: true,
   });
 
   // 4. 创建 UI
@@ -123,6 +124,24 @@ async function main() {
     appActor, ui, ptyManager, cmdTracker, tabManager, renderer, gracefulExit,
   });
   ui.onKey((key: string) => keyHandler.handle(key));
+
+  // 10.5 鼠标点击回调
+  ui.onTabClick((tabId: string) => {
+    appActor.send({ type: "SWITCH_TAB", tabId });
+    ui.setActiveTab(tabId);
+    const parser = tabManager.getParser(tabId);
+    if (parser) ui.updateTerminalGrid(parser.getGrid());
+    const cwd = tabManager.getTabCwd(tabId);
+    if (cwd) ui.updateTabBranch(tabId, getGitBranch(cwd));
+  });
+
+  ui.onPaneClick((paneId: string) => {
+    appActor.send({ type: "SWITCH_TAB", tabId: paneId });
+    ui.focusPane(paneId);
+    ui.setActiveTab(paneId);
+    const parser = tabManager.getParser(paneId);
+    if (parser) ui.updatePaneGrid(paneId, parser.getGrid());
+  });
 
   // 11. 订阅状态变化
   appActor.subscribe((state) => {

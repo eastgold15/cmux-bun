@@ -5,7 +5,7 @@ import {
   TextAttributes,
   RGBA,
 } from "@opentui/core";
-import type { CliRenderer, KeyEvent, TextChunk, CursorStyleOptions } from "@opentui/core";
+import type { CliRenderer, KeyEvent, TextChunk, CursorStyleOptions, MouseEvent } from "@opentui/core";
 import type { TabState, AgentLifecycle } from "../contracts/index.js";
 import type { Cell, CursorInfo } from "../core/parser/ansi-parser.js";
 import type { LayoutNode, Rect } from "../core/layout/layout-tree.js";
@@ -36,6 +36,8 @@ export class AppUI {
 
   private onKeyHandler: ((key: string) => void) | null = null;
   private onResizeHandler: ((cols: number, rows: number) => void) | null = null;
+  private onTabClickHandler: ((tabId: string) => void) | null = null;
+  private onPaneClickHandler: ((paneId: string) => void) | null = null;
 
   // Overlay: 重命名
   private renameOverlay: BoxRenderable | null = null;
@@ -138,6 +140,14 @@ export class AppUI {
     this.onResizeHandler = handler;
   }
 
+  onTabClick(handler: (tabId: string) => void) {
+    this.onTabClickHandler = handler;
+  }
+
+  onPaneClick(handler: (paneId: string) => void) {
+    this.onPaneClickHandler = handler;
+  }
+
   addTab(tabId: string, name: string, cwd?: string) {
     const tabItem = new BoxRenderable(this.renderer, {
       id: `tab-${tabId}`,
@@ -168,6 +178,12 @@ export class AppUI {
     tabItem.add(tabText);
     tabItem.add(cwdText);
     tabItem.add(branchText);
+
+    // 鼠标点击切换 Tab
+    tabItem.onMouseDown = (_e: MouseEvent) => {
+      this.onTabClickHandler?.(tabId);
+    };
+
     this.sidebar.add(tabItem);
     this.tabItems.set(tabId, { box: tabItem, text: tabText, cwdText, branchText, hasUnread: false, isWorktree: false, name });
   }
@@ -397,6 +413,11 @@ export class AppUI {
         this.paneContainer.add(box);
         pane = { box, text };
         this.panes.set(id, pane);
+
+        // 鼠标点击切换焦点 pane
+        box.onMouseDown = (_event: MouseEvent) => {
+          this.onPaneClickHandler?.(id);
+        };
       } else {
         pane.box.left = rect.x;
         pane.box.top = rect.y;
@@ -451,8 +472,8 @@ export class AppUI {
     const paneTop = typeof pane.box.top === "number" ? pane.box.top : 0;
 
     // pane 边框占 1 字符，内容区域从 (left+1, top+1) 开始
-    const screenX = paneLeft + 1 + cursorInfo.x;
-    const screenY = paneTop + 1 + cursorInfo.y;
+    const screenX = SIDEBAR_WIDTH + paneLeft + 1 + cursorInfo.x
+    const screenY = paneTop + 2 + cursorInfo.y;
 
     this.renderer.setCursorPosition(screenX, screenY, cursorInfo.visible);
 
