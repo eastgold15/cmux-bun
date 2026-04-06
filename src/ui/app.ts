@@ -3,7 +3,7 @@ import {
   TextRenderable,
 } from "@opentui/core";
 import type { CliRenderer, KeyEvent } from "@opentui/core";
-import type { TabState } from "../contracts/index.js";
+import type { TabState, AgentLifecycle } from "../contracts/index.js";
 import type { Cell } from "../core/parser/ansi-parser.js";
 import type { LayoutNode, Rect } from "../core/layout/layout-tree.js";
 import { resolveRects } from "../core/layout/layout-tree.js";
@@ -28,6 +28,8 @@ export class AppUI {
   private activeTabId: string | null = null;
   private focusedPaneId: string | null = null;
   private tabStates: Map<string, TabState> = new Map();
+  private agentStatuses: Map<string, AgentLifecycle> = new Map();
+  private agentTasks: Map<string, string> = new Map();
 
   private onKeyHandler: ((key: string) => void) | null = null;
   private onResizeHandler: ((cols: number, rows: number) => void) | null = null;
@@ -180,6 +182,8 @@ export class AppUI {
       this.tabItems.delete(tabId);
     }
     this.tabStates.delete(tabId);
+    this.agentStatuses.delete(tabId);
+    this.agentTasks.delete(tabId);
     this.removePane(tabId);
   }
 
@@ -214,10 +218,47 @@ export class AppUI {
     }
   }
 
+  /** 更新 Tab 的 Agent 生命周期状态 */
+  updateAgentStatus(tabId: string, status: AgentLifecycle, task?: string) {
+    this.agentStatuses.set(tabId, status);
+    if (task !== undefined) this.agentTasks.set(tabId, task);
+
+    const item = this.tabItems.get(tabId);
+    if (item) this.updateTabIndicator(tabId, item, this.tabStates.get(tabId));
+    this.updatePaneBorders();
+
+    // success 状态 2 秒后自动回到 idle
+    if (status === "success") {
+      setTimeout(() => {
+        if (this.agentStatuses.get(tabId) === "success") {
+          this.updateAgentStatus(tabId, "idle");
+        }
+      }, 2000);
+    }
+
+    // error 时在状态栏显示错误信息
+    if (status === "error") {
+      const taskDesc = this.agentTasks.get(tabId) ?? "";
+      this.updateStatusBar(` \u2717 Agent Error: ${taskDesc}`);
+    }
+  }
+
   private updateTabIndicator(tabId: string, item: { text: TextRenderable; hasUnread: boolean }, state?: TabState) {
     const isActive = tabId === this.activeTabId;
+    const agentStatus = this.agentStatuses.get(tabId);
     let indicator = " ";
-    if (state?.hasAlert) {
+
+    // Agent lifecycle 优先级最高
+    if (agentStatus === "busy") {
+      indicator = "\u23F3";
+      item.text.fg = theme.indicator.busy;
+    } else if (agentStatus === "success") {
+      indicator = "\u2713";
+      item.text.fg = "#55ff55";
+    } else if (agentStatus === "error") {
+      indicator = "\u2717";
+      item.text.fg = "#ff5555";
+    } else if (state?.hasAlert) {
       indicator = "!";
       item.text.fg = theme.indicator.attention;
     } else if (state?.isBusy) {
@@ -238,7 +279,15 @@ export class AppUI {
       ? (styled as { chunks: { text: string }[] }).chunks.map((c) => c.text).join("")
       : String(styled);
     const name = raw.replace(/^.\s/, "");
-    item.text.content = `${indicator} ${name}`;
+
+    // busy 时在名称后追加任务描述
+    if (agentStatus === "busy") {
+      const task = this.agentTasks.get(tabId) ?? "";
+      const suffix = task.length > 0 ? ` \u2026${task.slice(0, 20)}` : "";
+      item.text.content = `${indicator} ${name}${suffix}`;
+    } else {
+      item.text.content = `${indicator} ${name}`;
+    }
   }
 
   /** 更新 sidebar tab 的 git 分支显示 */
@@ -380,7 +429,14 @@ export class AppUI {
     for (const [id, pane] of this.panes) {
       const isFocused = id === this.focusedPaneId;
       const state = this.tabStates.get(id);
-      if (state?.hasAlert) {
+      const agentStatus = this.agentStatuses.get(id);
+      if (agentStatus === "error") {
+        pane.box.borderColor = "#ff5555";
+      } else if (agentStatus === "busy") {
+        pane.box.borderColor = theme.viewport.borderBusy;
+      } else if (agentStatus === "success") {
+        pane.box.borderColor = "#55ff55";
+      } else if (state?.hasAlert) {
         pane.box.borderColor = theme.viewport.borderAttention;
       } else if (state?.isBusy) {
         pane.box.borderColor = theme.viewport.borderBusy;

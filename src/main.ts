@@ -593,6 +593,15 @@ async function main() {
     sendTabEvent: (tabId: string, event: Record<string, unknown>) => {
       const actor = tabActors.get(tabId);
       actor?.send(event as any);
+      // 同步更新 UI 的 Agent 生命周期状态
+      const type = event.type as string;
+      if (type === "AGENT_STARTED") {
+        ui.updateAgentStatus(tabId, "busy", event.task as string);
+      } else if (type === "AGENT_COMPLETED") {
+        ui.updateAgentStatus(tabId, "success");
+      } else if (type === "AGENT_ERROR") {
+        ui.updateAgentStatus(tabId, "error", event.error as string);
+      }
     },
     createWorktreeTab,
     removeWorktreeTab,
